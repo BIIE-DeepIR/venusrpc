@@ -158,6 +158,34 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_simulation(args: argparse.Namespace) -> int:
+    from venusrpc.simulation import (
+        DEFAULT_CONFIG_DIR,
+        get_simulation,
+        set_simulation,
+    )
+
+    cfg_dir = Path(args.config_dir) if args.config_dir else None
+    try:
+        if args.action == "status":
+            states = get_simulation(cfg_dir)
+        else:
+            states = set_simulation(args.action == "on", cfg_dir)
+    except PermissionError as exc:
+        print(f"permission denied (need admin?): {exc}", file=sys.stderr)
+        return 1
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    for s in states:
+        if s.enabled is None:
+            print(f"{s.label} = <missing> ({s.path})")
+        else:
+            print(f"{s.label} = {'ON' if s.enabled else 'OFF'}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="venusrpc")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -201,6 +229,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="print stale entries but exit 0 instead of 2",
     )
     p_check.set_defaults(func=_cmd_check)
+
+    p_sim = sub.add_parser(
+        "simulation",
+        help="read or set Hamilton Venus simulation flags (needs admin to write)",
+    )
+    p_sim.add_argument("action", choices=("status", "on", "off"))
+    p_sim.add_argument(
+        "--config-dir",
+        default=None,
+        help=r"Venus config directory (default: C:\Program Files (x86)\HAMILTON\Config)",
+    )
+    p_sim.set_defaults(func=_cmd_simulation)
 
     return parser
 

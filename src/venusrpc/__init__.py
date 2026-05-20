@@ -10,6 +10,11 @@ from venusrpc.connection import Connection, VenusError, VenusTransportError
 from venusrpc.types import Array, Device, LiquidClass, Sequence, Variable
 from venusrpc.helpers import Helpers
 from venusrpc.codegen import Codegen
+from venusrpc.simulation import (
+    SimulationState,
+    get_simulation,
+    set_simulation,
+)
 
 __all__ = [
     "Connection",
@@ -22,6 +27,9 @@ __all__ = [
     "LiquidClass",
     "Helpers",
     "Codegen",
+    "SimulationState",
+    "get_simulation",
+    "set_simulation",
     "verify_resources",
 ]
 

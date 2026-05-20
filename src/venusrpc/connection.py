@@ -131,6 +131,8 @@ class Connection:
         spawn: bool = True,
         keep_command_files: bool = False,
         command_dir: str | os.PathLike[str] | None = None,
+        simulation: bool | None = None,
+        simulation_config_dir: str | os.PathLike[str] | None = None,
     ) -> None:
         self._hsl_dir = Path(__file__).resolve().parent / "hsl"
         self._hsl_template = self._hsl_dir / "venusrpc_host.hsl"
@@ -148,6 +150,22 @@ class Connection:
         self._closed = False
         self._lock = threading.Lock()
         self._result_timeout: float = 30.0
+
+        if simulation is not None:
+            from .simulation import set_simulation
+
+            sim_dir = (
+                Path(simulation_config_dir)
+                if simulation_config_dir is not None
+                else None
+            )
+            try:
+                set_simulation(simulation, sim_dir)
+            except PermissionError as exc:
+                raise VenusTransportError(
+                    "cannot write Venus simulation flag (need admin?): " f"{exc}"
+                ) from exc
+        self.simulation = simulation
 
         lay = Path(layout_file).resolve() if layout_file else None
         self.layout_file = lay
