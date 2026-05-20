@@ -25,31 +25,42 @@ from pathlib import Path
 
 _PCR_RESOURCES = Path(__file__).resolve().parent / "pcr_resources"
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))  # so `pcr_resources` is importable as package
-
-from venusrpc import Connection, Device, Sequence
+sys.path.insert(
+    0, str(Path(__file__).resolve().parent)
+)  # so `pcr_resources` is importable as package
 
 from pcr_resources.venus_resources.__layout__ngsstarv_deck import Ngsstarv_deck
-from pcr_resources.venus_resources.__smt__ml_star import Ml_star
 from pcr_resources.venus_resources.__smt__channels1ml_8 import Channels1ml_8
+from pcr_resources.venus_resources.__smt__ml_star import Ml_star
+from venusrpc import Connection, Device, Sequence
 
 # ── Liquid class used for water transfers ────────────────────────────────────
 LC_WATER = "Tip_50ulFilter_Water_DispenseSurface_Empty"
 
 # ── Channel pattern: only channel 1 active ───────────────────────────────────
-CH1 = '10000000'
+CH1 = "10000000"
 
 
 def main() -> None:
     print("Connecting to Venus...")
-    with Connection(layout_file=Ngsstarv_deck.file) as con:
+    with Connection(layout_file=Ngsstarv_deck.file, simulation=True) as con:
         device = Device.from_existing(con)
         smt_star = Ml_star(con)
         smt_ch = Channels1ml_8(con)
 
-        tips_50 = Sequence(con, Ngsstarv_deck.Sequences.All_50ul_tips, deck_sequence=True)
-        tube_rack = Sequence(con, Ngsstarv_deck.Sequences.HCEppendorf_Adapter_24_tubes_T10_15_P4, deck_sequence=True)
-        target_plate = Sequence(con, Ngsstarv_deck.Sequences.azenta_framestar_96_PCR_T58_63_P3, deck_sequence=True)
+        tips_50 = Sequence(
+            con, Ngsstarv_deck.Sequences.All_50ul_tips, deck_sequence=True
+        )
+        tube_rack = Sequence(
+            con,
+            Ngsstarv_deck.Sequences.HCEppendorf_Adapter_24_tubes_T10_15_P4,
+            deck_sequence=True,
+        )
+        target_plate = Sequence(
+            con,
+            Ngsstarv_deck.Sequences.azenta_framestar_96_PCR_T58_63_P3,
+            deck_sequence=True,
+        )
 
         # Step 1 — initialize
         print("Initializing STAR...")
@@ -108,12 +119,14 @@ def _dump_latest_trace() -> None:
         print("\n[trace] no venusrpc trace files found")
         return
     latest = max(trc_files, key=lambda f: f.stat().st_mtime)
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"[trace] {latest.name}")
-    print('='*60)
-    print(latest.read_text(encoding="utf-8", errors="replace").encode(
-        sys.stdout.encoding or "utf-8", errors="replace"
-    ).decode(sys.stdout.encoding or "utf-8", errors="replace"))
+    print("=" * 60)
+    print(
+        latest.read_text(encoding="utf-8", errors="replace")
+        .encode(sys.stdout.encoding or "utf-8", errors="replace")
+        .decode(sys.stdout.encoding or "utf-8", errors="replace")
+    )
 
 
 if __name__ == "__main__":
