@@ -133,6 +133,7 @@ class Connection:
         command_dir: str | os.PathLike[str] | None = None,
         simulation: bool | None = None,
         simulation_config_dir: str | os.PathLike[str] | None = None,
+        cleanup_timeout: float = 180.0,
     ) -> None:
         self._hsl_dir = Path(__file__).resolve().parent / "hsl"
         self._hsl_template = self._hsl_dir / "venusrpc_host.hsl"
@@ -150,6 +151,9 @@ class Connection:
         self._closed = False
         self._lock = threading.Lock()
         self._result_timeout: float = 30.0
+        # How long to let HxRun.exe finish the Venus "End method" cleanup
+        # (park iSWAP, move channels/96-head up) before force-killing it.
+        self._cleanup_timeout: float = cleanup_timeout
 
         if simulation is not None:
             from .simulation import set_simulation
@@ -163,7 +167,7 @@ class Connection:
                 set_simulation(simulation, sim_dir)
             except PermissionError as exc:
                 raise VenusTransportError(
-                    "cannot write Venus simulation flag (need admin?): " f"{exc}"
+                    f"cannot write Venus simulation flag (need admin?): {exc}"
                 ) from exc
         self.simulation = simulation
 
@@ -311,7 +315,9 @@ class Connection:
 
         if self._process is not None:
             try:
-                self._process.wait(timeout=15)
+                # Wait for the runtime to run its end-of-method instrument
+                # cleanup and exit on its own; only kill as a last resort.
+                self._process.wait(timeout=self._cleanup_timeout)
             except subprocess.TimeoutExpired:
                 self._process.kill()
                 self._process.wait()
