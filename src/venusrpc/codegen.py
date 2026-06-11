@@ -31,7 +31,14 @@ _HX_CFG_CONVERTER = Path(r"C:\Program Files (x86)\HAMILTON\Bin\HxCfgFilConverter
 
 _SUBMETHOD_HASH_PREFIX = "# venusrpc-submethod-hash: "
 _LAYOUT_HASH_PREFIX = "# venusrpc-layout-hash: "
+_LABWARE_HASH_PREFIX = "# venusrpc-labware-hash: "
 _SUBMETHOD_CODEGEN_SALT = b"submethod-codegen-v2"
+_LABWARE_CODEGEN_SALT = b"labware-codegen-v1"
+
+_LABWARE_BASE_DEFAULT = Path(r"C:\Program Files (x86)\HAMILTON\LabWare")
+
+# Source-file extension -> venusrpc base class for the generated definition.
+_LABWARE_BASE_CLASSES = {"rck": "Rack", "tml": "Carrier", "lid": "Lid"}
 
 
 def _sanitize_identifier(raw: str) -> str:
@@ -69,6 +76,47 @@ def _python_default_literal(raw: str) -> str:
         return raw
     except ValueError:
         return repr(raw)
+
+
+_FLAT_KV_RE = re.compile(r'^([A-Za-z0-9_.]+),\s*"(.*)",\s*$', re.MULTILINE)
+
+
+def _parse_flat_hxcfg(text: str) -> dict[str, str]:
+    """Parse a flat ``Key, "Value",`` HxCfg file (.rck/.ctr/.tml/.lid)."""
+    return {m.group(1): m.group(2) for m in _FLAT_KV_RE.finditer(text)}
+
+
+def _flat_float(d: dict[str, str], key: str) -> float | None:
+    raw = d.get(key)
+    if raw is None or raw == "":
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _flat_int(d: dict[str, str], key: str) -> int | None:
+    f = _flat_float(d, key)
+    return int(f) if f is not None else None
+
+
+def _safe_volume(eqn: str | None, height: float | None) -> float | None:
+    """Evaluate a Hamilton volume equation ``EqnOfVol`` at a liquid height.
+
+    Equations are simple arithmetic in ``h`` (e.g. ``"h*17.7369"``). Only a
+    whitelisted character set is evaluated, with no builtins available.
+    """
+    if not eqn or height is None:
+        return None
+    expr = eqn.replace("^", "**")
+    if not re.fullmatch(r"[0-9.eE+\-*/() h]+", expr):
+        return None
+    try:
+        value = eval(expr, {"__builtins__": {}}, {"h": height})  # noqa: S307
+    except Exception:
+        return None
+    return round(float(value), 4) if isinstance(value, (int, float)) else None
 
 
 def _convert_to_ascii(file: Path) -> None:
@@ -138,9 +186,14 @@ class Codegen:
         layout: str | Path,
         output_dir: str | Path | None = None,
         *,
+        labware_module: str | None = None,
         force: bool = False,
     ) -> Path:
         """Generate a Python module from a .lay deck layout.
+
+        If ``labware_module`` is given (e.g. ``"__labware__"``), the deck class
+        also gets an ``Instances`` nested class mapping each placed labware name
+        to its definition class in that sibling module.
 
         Returns the path to the generated .py file.
         """
@@ -161,6 +214,29 @@ class Codegen:
         sequences = re.findall(r'Seq\.\d+\.Name,\s*"([A-Za-z0-9_]+)",', content)
         labware = re.findall(r'Labware\.\d+\.Id,\s*"([A-Za-z0-9_]+)",', content)
 
+        # (var, definition_attr, name_literal_or_None). var is the Python
+        # attribute; name_literal is set only when the exact placed name differs
+        # from var (LabwareInstance.__set_name__ recovers it otherwise).
+        instances: list[tuple[str, str, str | None]] = []
+        if labware_module:
+            placements, attr_by_rel = cls._labware_index(layout)
+            seen: dict[str, str] = {}  # var -> exact instance name
+            for inst, relpath in placements:
+                attr = attr_by_rel.get(relpath)
+                if attr is None:
+                    continue
+                var = _sanitize_attr(inst)
+                base_var, n = var, 2
+                while var in seen and seen[var] != inst:
+                    var = f"{base_var}_{n}"
+                    n += 1
+                if var in seen:  # duplicate placement of the same instance id
+                    continue
+                seen[var] = inst
+                name_lit = None if var == inst else repr(inst)
+                instances.append((var, attr, name_lit))
+            instances.sort(key=lambda t: t[0].lower())
+
         env = cls._jinja_env()
         template = env.get_template("deck_layout.py.j2")
         body = template.render(
@@ -168,6 +244,8 @@ class Codegen:
             layout_name=sanitized,
             sequences=sorted(set(sequences)),
             labware=sorted(set(labware)),
+            labware_module=labware_module,
+            instances=instances,
         )
         generated_py.write_text(
             f"{_LAYOUT_HASH_PREFIX}{new_hash}\n{body}", encoding="utf-8"
@@ -314,6 +392,273 @@ class Codegen:
         print(f"Generated: {out_file}")
         cls._regenerate_init(out_dir)
         return out_file
+
+    @classmethod
+    def read_labware(
+        cls,
+        layout: str | Path,
+        output_dir: str | Path | None = None,
+        *,
+        labware_base: str | Path = _LABWARE_BASE_DEFAULT,
+        vendor_dir: str | Path | None = None,
+        repo_root: str | Path | None = None,
+        force: bool = False,
+    ) -> Path:
+        """Generate a Python module of labware properties from a deck layout.
+
+        Resolves every placed labware in the ``.lay`` to its definition file,
+        copies (vendors) the referenced ``.rck``/``.tml``/``.lid`` (and linked
+        ``.ctr``) under ``vendor_dir`` so the build is repo-local, then parses
+        them into a definition-keyed ``__labware__.py``.
+
+        Returns the path to the generated .py file.
+        """
+        layout = Path(layout).resolve()
+        out_dir = cls._resolve_output_dir(output_dir)
+        base = Path(labware_base)
+        vendor = (
+            Path(vendor_dir).resolve()
+            if vendor_dir
+            else (out_dir.parent / "resources" / "labware")
+        )
+        root = Path(repo_root).resolve() if repo_root else vendor.parent.parent
+        generated_py = out_dir / "__labware__.py"
+
+        placements, attr_by_rel = cls._labware_index(layout)
+        if not placements:
+            print(f"No labware found in layout: {layout}")
+            return generated_py
+
+        # Vendor every referenced definition (+ its linked .ctr) into the repo.
+        vendored: dict[str, Path] = {}  # relpath -> vendored definition path
+        ctr_for: dict[str, Path | None] = {}  # relpath -> vendored/source .ctr
+        for relpath in sorted(attr_by_rel):
+            dst = cls._vendor_file(base, relpath, vendor, force=force)
+            if dst is None:
+                continue
+            vendored[relpath] = dst
+            ctr_for[relpath] = cls._vendor_linked_ctr(base, relpath, dst, force=force)
+
+        hash_inputs = list(vendored.values()) + [p for p in ctr_for.values() if p]
+        new_hash = cls._labware_hash(layout, hash_inputs)
+        if not force and cls._read_hash(generated_py, _LABWARE_HASH_PREFIX) == new_hash:
+            print(f"Up-to-date: {generated_py}")
+            return generated_py
+
+        defs: list[dict[str, Any]] = []
+        for relpath in sorted(vendored):
+            def_path = vendored[relpath]
+            kind = def_path.suffix.lstrip(".").lower()
+            defs.append(
+                cls._build_labware_entry(
+                    attr=attr_by_rel[relpath],
+                    def_path=def_path,
+                    ctr_path=ctr_for.get(relpath),
+                    kind=kind,
+                    repo_root=root,
+                )
+            )
+        defs.sort(key=lambda e: e["attr"].lower())
+
+        bases = sorted({e["base"] for e in defs})
+
+        env = cls._jinja_env()
+        template = env.get_template("labware.py.j2")
+        body = template.render(defs=defs, bases=bases)
+        generated_py.write_text(
+            f"{_LABWARE_HASH_PREFIX}{new_hash}\n{body}", encoding="utf-8"
+        )
+        print(f"Generated: {generated_py} ({len(defs)} definitions)")
+        cls._regenerate_init(out_dir)
+        return generated_py
+
+    @classmethod
+    def _parse_lay_labware(cls, layout: Path) -> list[tuple[str, str]]:
+        """Return (placed_instance_id, definition_relpath) pairs from a .lay."""
+        content = _read_ascii(layout)
+        ids = dict(re.findall(r'Labware\.(\d+)\.Id,\s*"([^"]*)"', content))
+        files = dict(re.findall(r'Labware\.(\d+)\.File,\s*"([^"]*)"', content))
+        out: list[tuple[str, str]] = []
+        for n, inst in ids.items():
+            f = files.get(n)
+            if not inst or not f:
+                continue
+            out.append((inst, f.replace("\\\\", "\\")))
+        return out
+
+    @classmethod
+    def _labware_index(
+        cls, layout: Path
+    ) -> tuple[list[tuple[str, str]], dict[str, str]]:
+        """Shared labware naming used by both labware and layout codegen.
+
+        Returns ``(placements, attr_by_relpath)`` where ``placements`` is the
+        list of ``(instance_id, relpath)`` pairs and ``attr_by_relpath`` maps
+        each unique definition path to its (collision-resolved) class-attr
+        name. read_labware names definition classes from this map; read_layout
+        references those same names from the deck's ``Instances`` — so they
+        always match.
+        """
+        placements = cls._parse_lay_labware(layout)
+        attr_by_rel: dict[str, str] = {}
+        used: dict[str, str] = {}  # attr -> relpath
+        for relpath in sorted({rel for _, rel in placements}):
+            p = Path(relpath)
+            stem, kind = p.stem, p.suffix.lstrip(".").lower()
+            attr = _sanitize_attr(stem)
+            if attr in used and used[attr] != relpath:
+                attr = _sanitize_attr(f"{stem}_{kind}")
+            base_attr, n = attr, 2
+            while attr in used and used[attr] != relpath:
+                attr = f"{base_attr}_{n}"
+                n += 1
+            used[attr] = relpath
+            attr_by_rel[relpath] = attr
+        return placements, attr_by_rel
+
+    @staticmethod
+    def _vendor_file(
+        base: Path, relpath: str, vendor_dir: Path, *, force: bool
+    ) -> Path | None:
+        """Copy ``base/relpath`` into ``vendor_dir/relpath`` (idempotent)."""
+        src = base / relpath
+        if not src.exists():
+            warnings.warn(f"labware definition not found, skipping: {src}")
+            return None
+        dst = vendor_dir / relpath
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if force or not dst.exists():
+            shutil.copy2(src, dst)
+        return dst
+
+    @classmethod
+    def _vendor_linked_ctr(
+        cls, base: Path, relpath: str, vendored_def: Path, *, force: bool
+    ) -> Path | None:
+        """Resolve a definition's ``Cntr.1`` well file and vendor it alongside."""
+        d = _parse_flat_hxcfg(_read_ascii(vendored_def))
+        rel = (d.get("Cntr.1.fileRel") or "").replace("\\", "/")
+        absf = (d.get("Cntr.1.file") or "").replace("\\", "/")
+        src_dir = (base / relpath).parent
+        candidates: list[Path] = []
+        if rel:
+            candidates.append((src_dir / rel))
+        if absf:
+            p = Path(absf)
+            candidates.append(p if p.is_absolute() else base / absf)
+        src_ctr: Path | None = None
+        for c in candidates:
+            try:
+                if c.exists():
+                    src_ctr = c.resolve()
+                    break
+            except OSError:
+                continue
+        if src_ctr is None:
+            return None
+        dst = vendored_def.parent / src_ctr.name
+        if force or not dst.exists():
+            shutil.copy2(src_ctr, dst)
+        return dst
+
+    @classmethod
+    def _build_labware_entry(
+        cls,
+        *,
+        attr: str,
+        def_path: Path,
+        ctr_path: Path | None,
+        kind: str,
+        repo_root: Path,
+    ) -> dict[str, Any]:
+        """Parse one labware definition (tier-by-presence) into template data.
+
+        ``kind`` (file extension) picks the base class; the kind itself is
+        carried by that base class, so it is not re-emitted on the subclass.
+        """
+        d = _parse_flat_hxcfg(_read_ascii(def_path))
+        try:
+            rel_file = def_path.relative_to(repo_root).as_posix()
+        except ValueError:
+            rel_file = def_path.as_posix()
+
+        base = _LABWARE_BASE_CLASSES.get(kind, "LabwareDef")
+        lines: list[tuple[str, str]] = [
+            ("model", repr(def_path.stem)),
+            ("file", repr(rel_file)),
+            ("length", repr(_flat_float(d, "Dim.Dx"))),
+            ("width", repr(_flat_float(d, "Dim.Dy"))),
+            ("height", repr(_flat_float(d, "Dim.Dz"))),
+            ("stack_height", repr(_flat_float(d, "StackHt"))),
+        ]
+
+        rows = _flat_int(d, "Rows")
+        columns = _flat_int(d, "Columns")
+        if rows is not None and columns is not None:
+            lines += [
+                ("rows", repr(rows)),
+                ("columns", repr(columns)),
+                ("pitch_x", repr(_flat_float(d, "Dx"))),
+                ("pitch_y", repr(_flat_float(d, "Dy"))),
+            ]
+
+        if ctr_path is not None:
+            cd = _parse_flat_hxcfg(_read_ascii(ctr_path))
+            depth = _flat_float(cd, "Depth")
+            max_depth = _flat_float(cd, "1.Max")
+            eqn = cd.get("1.EqnOfVol") or None
+            lines += [
+                ("well_depth", repr(depth)),
+                ("well_max_depth", repr(max_depth)),
+                ("well_max_volume", repr(_safe_volume(eqn, max_depth))),
+                ("volume_eqn", repr(eqn)),
+            ]
+
+        segs_x = cls._segments(d, "x")
+        segs_y = cls._segments(d, "y")
+        if segs_x:
+            lines.append(("segments_x", repr(segs_x)))
+        if segs_y:
+            lines.append(("segments_y", repr(segs_y)))
+
+        return {
+            "attr": attr,
+            "base": base,
+            "doc": f"{def_path.stem} ({kind})",
+            "lines": lines,
+        }
+
+    @staticmethod
+    def _segments(d: dict[str, str], axis: str) -> tuple[tuple[float | None, ...], ...]:
+        """Extract the ``Seg_<axis>`` footprint profile, bottom-up."""
+        count = _flat_int(d, f"SegmentCount_{axis}") or 0
+        segs: list[tuple[float | None, float | None, float | None]] = []
+        for i in range(count):
+            lower = _flat_float(d, f"Seg_{axis}.{i}.LowerWidth")
+            upper = _flat_float(d, f"Seg_{axis}.{i}.UpperWidth")
+            seg_h = _flat_float(d, f"Seg_{axis}.{i}.SegmentHeight")
+            if lower is None and upper is None:
+                continue
+            segs.append((lower, upper, seg_h))
+        return tuple(segs)
+
+    @classmethod
+    def _labware_hash(cls, layout: Path, vendored_paths: list[Path]) -> str:
+        env = cls._jinja_env()
+        template_src, _, _ = env.loader.get_source(env, "labware.py.j2")
+        h = hashlib.sha256()
+        h.update(layout.read_bytes())
+        h.update(b"\0")
+        for p in sorted(vendored_paths, key=lambda x: str(x).lower()):
+            try:
+                h.update(p.read_bytes())
+            except OSError:
+                pass
+            h.update(b"\0")
+        h.update(template_src.encode("utf-8"))
+        h.update(b"\0")
+        h.update(_LABWARE_CODEGEN_SALT)
+        return h.hexdigest()
 
     @classmethod
     def verify(
@@ -628,6 +973,8 @@ class Codegen:
                 continue
             if stem == "__liquid_classes__":
                 lines.append(f"from .{stem} import LiquidClasses")
+            elif stem == "__labware__":
+                lines.append(f"from . import {stem} as labware")
             elif stem.startswith("__layout__"):
                 name = stem.removeprefix("__layout__")
                 cls_name = name[:1].upper() + name[1:].lower()

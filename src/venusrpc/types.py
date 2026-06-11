@@ -179,7 +179,11 @@ class Sequence:
             return
         parts = [f"{n}.SetCount(0);"]
         for lab, pos in zip(self.labware, self.position):
-            parts.append(f"{n}.Add({_hsl.literal(str(lab))}, {_hsl.literal(pos)});")
+            # HSL sequence.Add types both args as strings; a bare numeric
+            # position trips "type mismatch in formal parameter 2". pull()'s
+            # _parse_pos turns digit-only positions back into ints, so always
+            # stringify here to survive a push/pull/push round-trip.
+            parts.append(f"{n}.Add({_hsl.literal(str(lab))}, {_hsl.literal(str(pos))});")
         parts.append(f"{n}.SetCount({self.end});")
         parts.append(f"{n}.SetCurrentPosition({self.current});")
         self._con.execute("".join(parts))
@@ -280,3 +284,128 @@ class Device:
         object.__setattr__(obj, "name", name)
         object.__setattr__(obj, "layout_file", Path(layout_file))
         return obj
+
+
+def _interp_width(
+    segments: tuple[tuple[float | None, float | None, float | None], ...],
+    height_from_base: float,
+) -> float | None:
+    """Footprint width (mm) at a height above the base, from a segment profile.
+
+    ``segments`` is a bottom-up tuple of ``(lower_width, upper_width,
+    segment_height)``. Returns ``None`` if no profile is available.
+    """
+    if not segments:
+        return None
+    z = 0.0
+    for lower, upper, seg_h in segments:
+        h = seg_h or 0.0
+        lo = lower if lower is not None else upper
+        up = upper if upper is not None else lower
+        if height_from_base <= z + h or h == 0.0:
+            if lo is None:
+                return up
+            if up is None:
+                return lo
+            frac = 0.0 if h == 0 else max(0.0, min(1.0, (height_from_base - z) / h))
+            return lo + (up - lo) * frac
+        z = z + h
+    last = segments[-1]
+    return last[1] if last[1] is not None else last[0]
+
+
+class LabwareKind(str, Enum):
+    """The kind of a labware definition, from its source-file extension."""
+
+    RACK = "rck"  # .rck — rectangular rack / plate / tip or tube carrier base
+    CARRIER = "tml"  # .tml — carrier template
+    LID = "lid"  # .lid — plate lid / cover
+
+
+class LabwareDef:
+    """Common base for generated labware definitions.
+
+    Concrete definitions are emitted by :meth:`venusrpc.Codegen.read_labware`
+    into ``__labware__.py``; each subclasses the kind-specific base below
+    (:class:`Rack`, :class:`Carrier`, :class:`Lid`) and sets class attributes
+    like ``length``/``width``/``height`` and the footprint profile.
+    """
+
+    kind: "LabwareKind"
+    model: str = ""  # the definition / labware-type name (e.g. "Cos_96_HalfArea")
+    file: str = ""
+    length: float | None = None
+    width: float | None = None
+    height: float | None = None
+    stack_height: float | None = None
+    segments_x: tuple[tuple[float | None, float | None, float | None], ...] = ()
+    segments_y: tuple[tuple[float | None, float | None, float | None], ...] = ()
+
+    @classmethod
+    def width_at_x(cls, height_from_base: float) -> float | None:
+        """Footprint X width (mm) at the given height above the base."""
+        return _interp_width(cls.segments_x, height_from_base)
+
+    @classmethod
+    def width_at_y(cls, height_from_base: float) -> float | None:
+        """Footprint Y width (mm) at the given height above the base."""
+        return _interp_width(cls.segments_y, height_from_base)
+
+
+class Rack(LabwareDef):
+    """A rectangular rack — plate, tip rack, or tube-carrier base (``.rck``)."""
+
+    kind = LabwareKind.RACK
+    rows: int | None = None
+    columns: int | None = None
+    pitch_x: float | None = None
+    pitch_y: float | None = None
+    well_depth: float | None = None
+    well_max_depth: float | None = None
+    well_max_volume: float | None = None
+    volume_eqn: str | None = None
+
+
+class Carrier(LabwareDef):
+    """A carrier template that holds racks/plates on sites (``.tml``)."""
+
+    kind = LabwareKind.CARRIER
+
+
+class Lid(LabwareDef):
+    """A plate lid / cover (``.lid``)."""
+
+    kind = LabwareKind.LID
+
+
+class LabwareInstance:
+    """A labware placed on a deck — its exact deck name plus its definition.
+
+    Generated onto ``<Deck>.Instances``. The ``name`` is the exact labware Id
+    as placed in the layout (what you reference on the deck); ``definition`` is
+    the shared :class:`LabwareDef` subclass. Any other attribute access proxies
+    to the definition, so ``inst.length`` / ``inst.kind`` / ``inst.model`` work
+    directly without duplicating the definition's data.
+    """
+
+    __slots__ = ("name", "definition")
+
+    def __init__(self, definition: type[LabwareDef], name: str | None = None) -> None:
+        self.definition = definition
+        self.name = name  # filled from the attribute name by __set_name__ if None
+
+    def __set_name__(self, owner: type, attr: str) -> None:
+        if self.name is None:
+            self.name = attr
+
+    def __getattr__(self, item: str) -> object:
+        # name/definition are real slots; everything else comes from the def.
+        if item in ("name", "definition"):
+            raise AttributeError(item)
+        return getattr(self.definition, item)
+
+    def __str__(self) -> str:
+        return self.name
+
+    def __repr__(self) -> str:
+        return f"LabwareInstance({self.name!r} -> {self.definition.__name__})"

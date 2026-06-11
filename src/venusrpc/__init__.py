@@ -7,7 +7,19 @@ from pathlib import Path
 from typing import Literal
 
 from venusrpc.connection import Connection, VenusError, VenusTransportError
-from venusrpc.types import Array, Device, LiquidClass, Sequence, Variable
+from venusrpc.types import (
+    Array,
+    Carrier,
+    Device,
+    LabwareDef,
+    LabwareInstance,
+    LabwareKind,
+    Lid,
+    LiquidClass,
+    Rack,
+    Sequence,
+    Variable,
+)
 from venusrpc.helpers import Helpers
 from venusrpc.codegen import Codegen
 from venusrpc.simulation import (
@@ -24,6 +36,12 @@ __all__ = [
     "Array",
     "Sequence",
     "Device",
+    "LabwareDef",
+    "LabwareInstance",
+    "LabwareKind",
+    "Rack",
+    "Carrier",
+    "Lid",
     "LiquidClass",
     "Helpers",
     "Codegen",

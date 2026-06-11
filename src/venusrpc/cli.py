@@ -82,11 +82,22 @@ def _cmd_generate(args: argparse.Namespace) -> int:
     output_path = (base / output_dir).resolve() if output_dir else None
     force = bool(args.force)
 
+    lw = cfg.get("labware")
+    lw_enabled = lw is True or (isinstance(lw, dict) and lw.get("enabled", True))
+    # When labware codegen is on, the deck class also gets an Instances mapping
+    # referencing the sibling __labware__ module.
+    labware_module = "__labware__" if lw_enabled else None
+
     layouts = cfg.get("layouts", [])
     if isinstance(layouts, str):
         layouts = [layouts]
     for lay in layouts:
-        Codegen.read_layout(base / lay, output_dir=output_path, force=force)
+        Codegen.read_layout(
+            base / lay,
+            output_dir=output_path,
+            labware_module=labware_module,
+            force=force,
+        )
 
     if cfg.get("submethods_dir") or cfg.get("submethods", True):
         smt_dir = cfg.get("submethods_dir")
@@ -97,6 +108,15 @@ def _cmd_generate(args: argparse.Namespace) -> int:
     if isinstance(lc, dict) and lc.get("enabled", True):
         kwargs = {k: v for k, v in lc.items() if k != "enabled"}
         Codegen.read_liquid_classes(output_dir=output_path, **kwargs)
+
+    if lw_enabled:
+        lw_cfg = lw if isinstance(lw, dict) else {}
+        vendor_dir = (base / lw_cfg.get("vendor_dir", "resources/labware")).resolve()
+        lw_kwargs: dict = {"vendor_dir": vendor_dir, "repo_root": base, "force": force}
+        if lw_cfg.get("base"):
+            lw_kwargs["labware_base"] = lw_cfg["base"]
+        for lay in layouts:
+            Codegen.read_labware(base / lay, output_dir=output_path, **lw_kwargs)
 
     return 0
 

@@ -67,16 +67,42 @@ script and connects back.
 ## Codegen
 
 `venusrpc.Codegen` parses Venus deck layouts (`.lay`), submethod libraries
-(`.smt` + `.hsi`), and (optionally) the Hamilton liquid class Access DB. It
-emits typed Python wrappers into `./venus_resources/` that import from
-`venusrpc`.
+(`.smt` + `.hsi`), labware definitions (`.rck`/`.tml`/`.lid` + linked `.ctr`),
+and (optionally) the Hamilton liquid class Access DB. It emits typed Python
+wrappers into `./venus_resources/` that import from `venusrpc`.
 
 ```python
 from venusrpc import Codegen
 Codegen.read_layout("example_layout.lay")
 Codegen.read_submethods("./smt")
 Codegen.read_liquid_classes()  # Windows + pyodbc
+Codegen.read_labware("example_layout.lay")  # vendors + parses referenced labware
 ```
+
+`read_labware` resolves every placed labware in the `.lay` to its definition
+file, copies (vendors) the referenced files under `resources/labware/` so the
+build is repo-local, and emits `__labware__.py` — one **top-level class per
+definition**, each subclassing `Rack`, `Carrier`, or `Lid` (from `venusrpc`) so
+its kind is explicit. Every definition carries footprint `length`/`width`/
+`height`; `Rack`s additionally expose `rows`/`columns`/pitch, well
+`depth`/`max_volume`/`volume_eqn`, and the `segments_x`/`segments_y` profile
+(with `width_at_x(h)`/`width_at_y(h)` helpers).
+
+Placed instances live on the **deck layout class**, not in `__labware__`: when
+labware codegen is enabled, the deck class gains an `Instances` nested class of
+`LabwareInstance` objects — each carrying the **exact placed name** (`.name`,
+e.g. `"Cos_96_HalfArea_PR_Source"`) and its shared `.definition`. Other
+attributes proxy to the definition, so no data is duplicated:
+
+```python
+inst = Ngsstarv_deck.Instances.Cos_96_HalfArea_PR_Source
+inst.name        # "Cos_96_HalfArea_PR_Source"  (exact deck Id)
+inst.definition  # labware.Cos_96_HalfArea       (shared Rack subclass)
+inst.model       # "Cos_96_HalfArea"             (proxied; the .rck stem)
+inst.length      # 127.0                          (proxied)
+```
+
+The definition's own type name is `model` (the placed name owns `name`).
 
 ### Config-driven codegen
 
@@ -105,6 +131,13 @@ include_washstations = false
 include_default = true
 include_custom = true
 database = 'C:\Program Files (x86)\HAMILTON\Config\ML_STARLiquids.mdb'
+
+[tool.venusrpc.labware]
+enabled = true                         # set false to skip labware codegen
+# Source root the deck's relative labware paths resolve against. Referenced
+# definitions are vendored into vendor_dir (repo-local) and parsed from there.
+base = 'C:\Program Files (x86)\HAMILTON\LabWare'
+vendor_dir = "resources/labware"       # default: resources/labware (rel. to this file)
 ```
 
 Commands (auto-detect config in cwd; override with `--config <file>`):

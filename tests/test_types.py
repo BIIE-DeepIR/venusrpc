@@ -69,8 +69,8 @@ def test_sequence_push_serializes_records():
     s.current = 1
     s.push()
     hsl = con.calls[-1]["hsl_code"]
-    assert 'seq.Add("lab1", 1);' in hsl
-    assert 'seq.Add("lab2", 5);' in hsl
+    assert 'seq.Add("lab1", "1");' in hsl
+    assert 'seq.Add("lab2", "5");' in hsl
     assert "seq.SetCount(2);" in hsl
     assert "seq.SetCurrentPosition(1);" in hsl
 
