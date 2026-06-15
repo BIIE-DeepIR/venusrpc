@@ -21,6 +21,7 @@ from venusrpc.types import (
     Variable,
 )
 from venusrpc.helpers import Helpers
+from venusrpc.labware import Labware, LabwarePlacementError
 from venusrpc.codegen import Codegen
 from venusrpc.simulation import (
     SimulationState,
@@ -44,6 +45,8 @@ __all__ = [
     "Lid",
     "LiquidClass",
     "Helpers",
+    "Labware",
+    "LabwarePlacementError",
     "Codegen",
     "SimulationState",
     "get_simulation",
