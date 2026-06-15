@@ -31,6 +31,19 @@ def _parse_payload(payload: str) -> tuple[int, str, str]:
     return int(cmd_line), defs, code
 
 
+def _split_cmd_file(content: str) -> tuple[str, str]:
+    """Split a command ``.hsl`` file into ``(definitions, hsl_code)``.
+
+    Mirrors ``Connection._write_command_file``'s format:
+    ``{defs}\\nfunction __EvalExpr__()\\n{{\\n{code}\\n}}\\n``.
+    """
+    head, _, body = content.partition("function __EvalExpr__()\n{\n")
+    defs = head.rstrip("\n")
+    if body.endswith("}\n"):
+        body = body[:-2]
+    return defs, body.rstrip("\n")
+
+
 # ---------------------------------------------------------------------------
 # Fake HSL client (HTTP)
 # ---------------------------------------------------------------------------
@@ -80,7 +93,6 @@ class _FakeHslClient(threading.Thread):
 
                 cmd_id, _, _ = _parse_payload(body)
                 file_content = self._read_cmd_file(cmd_id)
-                self.received.append((cmd_id, file_content))
 
                 if "__venusrpc_shutdown__" in file_content:
                     # Acknowledge shutdown and exit.
@@ -97,7 +109,10 @@ class _FakeHslClient(threading.Thread):
                     conn.getresponse().read()
                     return
 
-                reply = self._responder(cmd_id, file_content)
+                defs, code = _split_cmd_file(file_content)
+                self.received.append((cmd_id, defs, code))
+
+                reply = self._responder(cmd_id, defs, code)
                 if reply is None:
                     # Simulate disconnect without posting result.
                     return
@@ -144,6 +159,8 @@ def _make_connection(
     c._lock = threading.Lock()
     c._process = None
     c._result_timeout = 5.0
+    c._keep_command_files = False
+    c._command_files = set()
 
     c._server = _VenusServer(("127.0.0.1", 0), _VenusHandler)
     bound_port: int = c._server.server_address[1]
@@ -277,6 +294,8 @@ def test_no_transport_error_without_spawn(tmp_path: Path) -> None:
     c._lock = threading.Lock()
     c._process = None
     c._result_timeout = 5.0
+    c._keep_command_files = False
+    c._command_files = set()
 
     c._server = _VenusServer(("127.0.0.1", 0), _VenusHandler)
     c._write_port_file(c._server.server_address[1])
@@ -292,3 +311,76 @@ def test_no_transport_error_without_spawn(tmp_path: Path) -> None:
     c._server_thread.join(5.0)
     c._server.server_close()
     c._remove_port_file()
+
+
+def _skeleton_for_ready(tmp_path: Path, poll_value: int | None) -> Connection:
+    """Minimal Connection with a live HTTP server and a fake runtime process."""
+    c = Connection.__new__(Connection)
+    c._hsl_dir = tmp_path
+    c._host_script = tmp_path / "venusrpc_host_test.hsl"
+    c._port_file = tmp_path / "venusrpc.port"
+    c._cmd_dir = tmp_path
+    c._command_counter = 0
+    c._closed = False
+    c._lock = threading.Lock()
+    c._keep_command_files = False
+    c._command_files = set()
+
+    class _FakeProc:
+        def poll(self) -> int | None:
+            return poll_value
+
+        def kill(self) -> None:
+            pass
+
+        def wait(self, *a: object, **k: object) -> int:
+            return 0
+
+    c._process = _FakeProc()
+    c._server = _VenusServer(("127.0.0.1", 0), _VenusHandler)
+    c._write_port_file(c._server.server_address[1])
+    c._server_thread = threading.Thread(target=c._server.serve_forever, daemon=True)
+    c._server_thread.start()
+    return c
+
+
+def test_await_ready_reports_runtime_exit(tmp_path: Path) -> None:
+    """If the runtime exits before /ready, fail fast with an actionable message."""
+    # A host trace with an analyze error, so diagnostics can be surfaced.
+    (tmp_path / "venusrpc_host_test_abc_Trace.trc").write_text(
+        "SYSTEM : Analyze method - start;\n"
+        "SYSTEM : Analyze method - complete with error;\n",
+        encoding="utf-8",
+    )
+    c = _skeleton_for_ready(tmp_path, poll_value=1)
+    try:
+        with pytest.raises(VenusTransportError) as ei:
+            c._await_ready(accept_timeout=2.0, host="127.0.0.1", bound_port=9999)
+        msg = str(ei.value)
+        assert "exited during startup" in msg
+        assert "instrument is powered off or unreachable" in msg
+        assert "Analyze method - complete with error" in msg  # trace detail
+    finally:
+        c._server_thread.join(5.0)
+
+
+def test_await_ready_times_out_when_runtime_alive(tmp_path: Path) -> None:
+    """If the runtime stays up but never readies, time out with a hint."""
+    c = _skeleton_for_ready(tmp_path, poll_value=None)  # still running
+    try:
+        with pytest.raises(VenusTransportError) as ei:
+            c._await_ready(accept_timeout=0.5, host="127.0.0.1", bound_port=9999)
+        assert "did not connect within 0.5s" in str(ei.value)
+    finally:
+        c._server_thread.join(5.0)
+
+
+def test_startup_diagnostics_missing_trace_is_empty(tmp_path: Path) -> None:
+    """No trace file -> empty diagnostics, never raises."""
+    c = _skeleton_for_ready(tmp_path, poll_value=1)
+    try:
+        assert c._startup_diagnostics() == ""
+    finally:
+        c._server.shutdown()
+        c._server_thread.join(5.0)
+        c._server.server_close()

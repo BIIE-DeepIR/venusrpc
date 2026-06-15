@@ -24,6 +24,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from queue import Empty, Queue
@@ -134,6 +135,7 @@ class Connection:
         simulation: bool | None = None,
         simulation_config_dir: str | os.PathLike[str] | None = None,
         cleanup_timeout: float = 180.0,
+        result_timeout: float = 180.0,
     ) -> None:
         self._hsl_dir = Path(__file__).resolve().parent / "hsl"
         self._hsl_template = self._hsl_dir / "venusrpc_host.hsl"
@@ -150,7 +152,12 @@ class Connection:
         self._process: subprocess.Popen[Any] | None = None
         self._closed = False
         self._lock = threading.Lock()
-        self._result_timeout: float = 30.0
+        # How long to wait for a single command's result. Must exceed the
+        # longest blocking operation: a real-hardware STAR initialize alone
+        # takes ~37s, and transport / pipetting submethods can run longer, so
+        # the default is generous. Tune per Connection, or per call via
+        # ``execute(timeout=...)`` for an unusually long step.
+        self._result_timeout: float = result_timeout
         # How long to let HxRun.exe finish the Venus "End method" cleanup
         # (park iSWAP, move channels/96-head up) before force-killing it.
         self._cleanup_timeout: float = cleanup_timeout
@@ -188,12 +195,7 @@ class Connection:
         if spawn:
             self._spawn_runtime(run_environment, start_minimized)
 
-        if not self._server._ready_event.wait(accept_timeout):
-            self._cleanup_on_failure()
-            raise VenusTransportError(
-                f"HSL host did not connect within {accept_timeout}s "
-                f"(listening on {host}:{bound_port})"
-            )
+        self._await_ready(accept_timeout, host, bound_port)
 
         atexit.register(self.close)
 
@@ -233,17 +235,27 @@ class Connection:
     def host_script(self) -> Path:
         return self._host_script
 
-    def execute(self, hsl_code: str = "", definitions: str = "") -> dict[str, Any]:
+    def execute(
+        self,
+        hsl_code: str = "",
+        definitions: str = "",
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         """Send HSL code to the runtime and return the parsed JSON response.
 
         Args:
             hsl_code: HSL statements executed inside __EvalExpr__().
             definitions: HSL global definitions (variables, includes, devices).
+            timeout: Seconds to wait for this command's result. Defaults to the
+                Connection's ``result_timeout``; raise it for an unusually long
+                blocking step.
 
         Returns:
             Parsed JSON object returned by the runtime. Empty dict if nothing
             was attached to ``___JSON___`` HSL side.
         """
+        result_timeout = self._result_timeout if timeout is None else timeout
         with self._lock:
             self._guard()
             self._command_counter += 1
@@ -254,10 +266,10 @@ class Connection:
             payload = f"{cmd_id}\n\n{_SEPARATOR}\n"
             self._server._cmd_queue.put(payload)
             try:
-                data = self._server._result_queue.get(timeout=self._result_timeout)
+                data = self._server._result_queue.get(timeout=result_timeout)
             except Empty as exc:
                 raise VenusTransportError(
-                    f"runtime did not return a result within {self._result_timeout}s"
+                    f"runtime did not return a result within {result_timeout}s"
                 ) from exc
             finally:
                 if not self._keep_command_files:
@@ -378,6 +390,64 @@ class Connection:
             raise VenusTransportError(
                 f"Venus runtime exited with code {self._process.returncode}"
             )
+
+    def _await_ready(self, accept_timeout: float, host: str, bound_port: int) -> None:
+        """Wait for the HSL host to POST ``/ready``.
+
+        Polls so we can fail fast with an actionable message if the Venus
+        runtime exits during startup. The usual cause of an early exit is
+        ``Analyze method`` failing — most often because the instrument is
+        powered off or unreachable on the network (the device load can't
+        connect), or the layout / method didn't compile.
+        """
+        deadline = time.monotonic() + accept_timeout
+        while not self._server._ready_event.wait(0.25):
+            exit_code = self._process.poll() if self._process is not None else None
+            if exit_code is not None:
+                detail = self._startup_diagnostics()
+                self._cleanup_on_failure()
+                raise VenusTransportError(
+                    f"Venus runtime exited during startup (exit code {exit_code}) "
+                    "before connecting. This usually means 'Analyze method' failed "
+                    "— most often the instrument is powered off or unreachable on "
+                    "the network, or the layout/method failed to compile."
+                    + (f" Venus trace: {detail}" if detail else "")
+                )
+            if time.monotonic() >= deadline:
+                detail = self._startup_diagnostics()
+                self._cleanup_on_failure()
+                raise VenusTransportError(
+                    f"HSL host did not connect within {accept_timeout}s "
+                    f"(listening on {host}:{bound_port}). The Venus runtime is "
+                    "still running but never signalled ready — check that the "
+                    "instrument is powered on and reachable, and that no Venus "
+                    "error dialog is waiting for input."
+                    + (f" Venus trace: {detail}" if detail else "")
+                )
+
+    def _startup_diagnostics(self) -> str:
+        """Best-effort one-line summary from the host trace for error messages.
+
+        Returns the last few ``Analyze method`` / error lines from this host's
+        trace file, or ``""`` if it can't be read (e.g. not written yet, or
+        still locked by the runtime)."""
+        try:
+            stem = self._host_script.stem
+            traces = sorted(
+                self._cmd_dir.glob(f"{stem}_*_Trace.trc"),
+                key=lambda p: p.stat().st_mtime,
+            )
+            if not traces:
+                return ""
+            text = traces[-1].read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+        salient = [
+            line.strip()
+            for line in text.splitlines()
+            if "Analyze method" in line or "error" in line.lower()
+        ]
+        return " | ".join(salient[-3:])
 
     def _cleanup_on_failure(self) -> None:
         self._server.shutdown()
