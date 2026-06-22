@@ -143,6 +143,33 @@ def _delete_lc(db: Path, name: str) -> None:
         conn.close()
 
 
+def _set_flow_rate(db: Path, name: str, as_flow_rate: float) -> None:
+    """UPDATE the aspirate flow rate of an existing liquid class."""
+    conn = _connect(db)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE LiquidClass SET AsFlowRate=? WHERE LiquidClassName=?",
+            as_flow_rate,
+            name,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _get_flow_rate(db: Path, name: str) -> float:
+    conn = _connect(db)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT AsFlowRate FROM LiquidClass WHERE LiquidClassName=?", name
+        )
+        return cursor.fetchone()[0]
+    finally:
+        conn.close()
+
+
 # ---------------------------------------------------------------------------
 # tests
 # ---------------------------------------------------------------------------
@@ -194,6 +221,34 @@ def test_codegen_picks_up_new_class(db: Path, tmp_path: Path):
     assert _TEST_LC_NAME in content, (
         f"{_TEST_LC_NAME!r} missing from generated file"
     )
+
+
+def test_modify_then_regenerate_flows_new_param(db: Path, tmp_path: Path):
+    """INSERT → UPDATE AsFlowRate → codegen → new value appears in Python params."""
+    from venusrpc.codegen import Codegen
+
+    _insert_lc(db, _TEST_LC_NAME)
+    assert _get_flow_rate(db, _TEST_LC_NAME) == 100.0
+
+    # Modify the existing class.
+    _set_flow_rate(db, _TEST_LC_NAME, 250.0)
+    assert _get_flow_rate(db, _TEST_LC_NAME) == 250.0
+
+    out_dir = tmp_path / "generated"
+    out_dir.mkdir()
+    Codegen.read_liquid_classes(
+        database=db,
+        include_1ml_channels=True,
+        include_96head=False,
+        include_custom=True,
+        output_dir=out_dir,
+    )
+
+    content = (out_dir / "__liquid_classes__.py").read_text(encoding="utf-8")
+    assert _TEST_LC_NAME in content
+    # The regenerated params dict must carry the modified flow rate, not the old.
+    assert "'AsFlowRate': 250.0" in content
+    assert "'AsFlowRate': 100.0" not in content.split(_TEST_LC_NAME, 1)[1][:600]
 
 
 def test_liquid_class_usable_as_venusrpc_type():
