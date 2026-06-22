@@ -170,3 +170,54 @@ def test_venus_reads_liquid_class_db_live():
         assert after == "OK", f"Venus did not pick up the inserted LC live: {after}"
     finally:
         _delete_probe()  # restore live DB
+
+
+def test_liquid_class_record_save_produces_venus_usable_class():
+    """End-to-end via the public API: LiquidClassRecord.save() a new class
+    mid-session, and confirm Venus aspirate resolves it."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from pcr_resources.venus_resources.__layout__ngsstarv_deck import Ngsstarv_deck
+    from pcr_resources.venus_resources.__smt__channels1ml_8 import Channels1ml_8
+    from pcr_resources.venus_resources.__smt__ml_star import Ml_star
+    from venusrpc import Connection, Device, LiquidClassRecord, Sequence
+
+    _delete_probe()
+    try:
+        # Build the probe class from a known-good one, save() writes it + Tadm.
+        src = LiquidClassRecord.load(_SOURCE_LC, _DB)
+        probe = src.model_copy(update={
+            "liquid_class_id": None,
+            "liquid_class_name": _PROBE_LC,
+            "original_liquid": 0,
+            "as_flow_rate": 175.0,
+        })
+
+        with Connection(
+            layout_file=Ngsstarv_deck.file,
+            simulation=True,
+            accept_timeout=120.0,
+        ) as con:
+            device = Device.from_existing(con)
+            Ml_star(con).initialize(device)
+            smt_ch = Channels1ml_8(con)
+            tips = Sequence(
+                con, Ngsstarv_deck.Sequences.All_50ul_tips, deck_sequence=True
+            )
+            tubes = Sequence(
+                con,
+                Ngsstarv_deck.Sequences.HCEppendorf_Adapter_24_tubes_T10_15_P4,
+                deck_sequence=True,
+            )
+            smt_ch.tip_pickup(ML_STAR=device, positions=tips, channel_pattern=_CH1)
+
+            before = _aspirate(smt_ch, device, tubes, _PROBE_LC)
+            probe.save(database=_DB)  # public API write, Venus still running
+            # The record is also directly usable as the aspirate argument.
+            after = _aspirate(smt_ch, device, tubes, probe)
+
+        assert before.startswith("ERROR")
+        assert after == "OK", f"Venus did not resolve the saved record: {after}"
+    finally:
+        _delete_probe()

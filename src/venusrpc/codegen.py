@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import pprint
 import re
 import shutil
 import subprocess
@@ -357,6 +356,7 @@ class Codegen:
                 selected_types.add(0)
 
             classes: list[dict[str, Any]] = []
+            seen_attrs: dict[str, str] = {}
             for row in cursor.fetchall():
                 devices = {int(x) for x in str(row[4]).split(";") if x.strip()}
                 if not devices & selected_devices:
@@ -370,16 +370,23 @@ class Codegen:
                 if row[6] not in selected_types:
                     continue
                 params = dict(zip(columns, row))
-                for k in ("LiquidNotes", "CorrectionCurve", "DesignHistory"):
-                    params.pop(k, None)
-                params = {k: params[k] for k in sorted(params)}
+                # Emit every column as a LiquidClassRecord kwarg (keyed by the
+                # exact DB column, which is the model's pydantic alias). Binary
+                # columns (LiquidNotes / CorrectionCurve / DesignHistory) are
+                # kept verbatim as bytes so edits round-trip losslessly.
+                kwargs_repr = "\n".join(
+                    f"{col}={params[col]!r}," for col in columns
+                )
+                attr = _sanitize_attr(row[1])
+                base_attr, n = attr, 2
+                while attr in seen_attrs and seen_attrs[attr] != row[1]:
+                    attr, n = f"{base_attr}_{n}", n + 1
+                seen_attrs[attr] = row[1]
                 classes.append(
                     {
-                        "attr": _sanitize_attr(row[1]),
+                        "attr": attr,
                         "name": row[1],
-                        "parameters_repr": pprint.pformat(
-                            params, width=100, sort_dicts=False
-                        ),
+                        "kwargs_repr": kwargs_repr,
                     }
                 )
         finally:
@@ -388,7 +395,13 @@ class Codegen:
         env = cls._jinja_env()
         template = env.get_template("liquid_classes.py.j2")
         out_file = out_dir / "__liquid_classes__.py"
-        out_file.write_text(template.render(liquid_classes=classes), encoding="utf-8")
+        out_file.write_text(
+            template.render(
+                liquid_classes=classes,
+                database_repr=repr(str(database)),
+            ),
+            encoding="utf-8",
+        )
         print(f"Generated: {out_file}")
         cls._regenerate_init(out_dir)
         return out_file

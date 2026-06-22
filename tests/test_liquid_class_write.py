@@ -246,9 +246,9 @@ def test_modify_then_regenerate_flows_new_param(db: Path, tmp_path: Path):
 
     content = (out_dir / "__liquid_classes__.py").read_text(encoding="utf-8")
     assert _TEST_LC_NAME in content
-    # The regenerated params dict must carry the modified flow rate, not the old.
-    assert "'AsFlowRate': 250.0" in content
-    assert "'AsFlowRate': 100.0" not in content.split(_TEST_LC_NAME, 1)[1][:600]
+    # The regenerated record must carry the modified flow rate, not the old.
+    assert "AsFlowRate=250.0" in content
+    assert "AsFlowRate=100.0" not in content.split(_TEST_LC_NAME, 1)[1][:800]
 
 
 def test_liquid_class_usable_as_venusrpc_type():

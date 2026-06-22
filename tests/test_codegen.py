@@ -73,33 +73,38 @@ def test_submethod_template_renders(env: Environment):
 
 
 def test_liquid_classes_template_renders(env: Environment):
-    import pprint
-
     out = env.get_template("liquid_classes.py.j2").render(
+        database_repr=repr(r"C:\db\ML_VANTAGELiquids.mdb"),
         liquid_classes=[
             {
                 "attr": "Water_DispenseSurface",
                 "name": "Water_DispenseSurface",
-                "parameters_repr": pprint.pformat({"a": 1, "b": "x"}),
+                "kwargs_repr": (
+                    "LiquidClassName='Water_DispenseSurface',\n"
+                    "AsFlowRate=100.0,\n"
+                    "CorrectionCurve=b'\\x00\\x01',"
+                ),
             },
             {
                 "attr": "Plasma_Empty_Tip",
                 "name": "Plasma-Empty.Tip",
-                "parameters_repr": pprint.pformat({}),
+                "kwargs_repr": "LiquidClassName='Plasma-Empty.Tip',",
             },
             {
                 "attr": "_300ul_Tip",
                 "name": "300ul Tip",
-                "parameters_repr": pprint.pformat({"v": None}),
+                "kwargs_repr": "LiquidClassName='300ul Tip',\nWhiPipJson=None,",
             },
-        ]
+        ],
     )
     assert "class LiquidClasses" in out
-    assert "Water_DispenseSurface" in out
+    assert "from venusrpc import LiquidClassRecord" in out
+    assert "SOURCE_DATABASE = 'C:\\\\db\\\\ML_VANTAGELiquids.mdb'" in out
+    assert "Water_DispenseSurface = LiquidClassRecord(" in out
+    assert "source_database=SOURCE_DATABASE," in out
     assert "Plasma_Empty_Tip" in out
     assert "_300ul_Tip" in out
-    assert "None" in out
-    assert "null" not in out
+    assert "WhiPipJson=None" in out
 
 
 # ---------------------------------------------------------------------------

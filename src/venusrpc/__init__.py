@@ -20,6 +20,7 @@ from venusrpc.types import (
     Sequence,
     Variable,
 )
+from venusrpc.liquid_class import DispenseMode, LiquidClassRecord
 from venusrpc.helpers import Helpers
 from venusrpc.labware import Labware, LabwarePlacementError
 from venusrpc.codegen import Codegen
@@ -44,6 +45,8 @@ __all__ = [
     "Carrier",
     "Lid",
     "LiquidClass",
+    "LiquidClassRecord",
+    "DispenseMode",
     "Helpers",
     "Labware",
     "LabwarePlacementError",
