@@ -64,6 +64,29 @@ Python is the server because it is the only side that knows its ephemeral
 port. The HSL host reads `venusrpc.port` from the same directory as the host
 script and connects back.
 
+## Sequence pull semantics
+
+`Sequence.pull()` (called automatically at the end of every generated SMT
+wrapper) returns only the cursor — `current` and `end`. Labware and position
+entries are **not** round-tripped: Python pushed them, Venus's
+`increment_sequence` only walks the cursor along them, so re-serializing the
+arrays on every call wastes bandwidth and exposes an HSL `sequence` quirk
+where each `push()` appends to `GetTotal()` without truncating, so the JSON
+payload doubles per call (~30 bytes → MB after a dozen iterations, killing
+HxRun via stack/memory pressure).
+
+| Call | Returns | Use |
+|--|--|--|
+| `seq.pull()` | `current`, `end` | default; safe for any SMT op |
+| `seq.pull_full()` | `current`, `end`, `labware`, `position` | rare: Venus populated the sequence itself (e.g. a barcode scan SMT) |
+| `seq.pull_with_xyz()` | + per-position xyz/angle | inspecting taught coordinates |
+
+Automatic sequence counting still works — Venus's `increment_sequence`
+advances `GetCurrentPosition()`, which `pull()` reads back. The only thing
+you lose is the ability to see labware/position changes Venus made
+server-side, which no current SMT does. If you ever write one that mutates a
+sequence, call `pull_full()` at that one site.
+
 ## Codegen
 
 `venusrpc.Codegen` parses Venus deck layouts (`.lay`), submethod libraries

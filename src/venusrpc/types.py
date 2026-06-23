@@ -143,7 +143,10 @@ class Sequence:
     sequence's contents.
     """
 
-    __slots__ = ("_con", "name", "_is_deck", "labware", "position", "current", "end")
+    __slots__ = (
+        "_con", "name", "_is_deck", "labware", "position", "current", "end",
+        "_pushed",
+    )
 
     def __init__(
         self,
@@ -161,13 +164,16 @@ class Sequence:
         self.position: list[int] = []
         self.current: int = 1
         self.end: int = 0
+        # (labware, position) pairs already materialised in the HSL sequence, so
+        # re-pushes only sync the cursor instead of re-Adding (see push()).
+        self._pushed: list[tuple[str, int | str]] = []
         if not deck_sequence:
             con.execute(definitions=f"sequence {self.name};")
         if copy_from is not None:
             con.execute(f"{self.name} = {copy_from};")
-            self.pull()
+            self.pull_full()
         elif deck_sequence:
-            self.pull()
+            self.pull_full()
 
     def push(self) -> None:
         n = self.name
@@ -177,8 +183,29 @@ class Sequence:
                 f"{n}.SetCount({self.end});{n}.SetCurrentPosition({self.current});"
             )
             return
-        parts = [f"{n}.SetCount(0);"]
-        for lab, pos in zip(self.labware, self.position):
+        # The generated SMT wrapper re-push()es every sequence arg before every
+        # call. HSL's Sequence.Add appends to GetTotal() even after SetCount(0),
+        # so re-Adding the whole content each call grows the underlying storage
+        # without bound — and AddJsonSequence dumps GetTotal(), producing the
+        # runaway labware payload. Materialise contents once, then only sync the
+        # cursor; Add just the genuinely-new trailing entries.
+        current_pairs = list(zip(self.labware, self.position))
+        if self._pushed == current_pairs:
+            self._con.execute(
+                f"{n}.SetCount({self.end});{n}.SetCurrentPosition({self.current});"
+            )
+            return
+        parts: list[str] = []
+        if current_pairs[: len(self._pushed)] == self._pushed:
+            start = len(self._pushed)  # append-only: add only the new tail
+        else:
+            # ponytail: content diverged (rare — callers build-then-traverse).
+            # SetCount(0) can't truncate GetTotal, so this path re-grows storage;
+            # acceptable since it isn't the hot path. Make a fresh Sequence to
+            # fully reset if a caller ever rebuilds contents in a loop.
+            parts.append(f"{n}.SetCount(0);")
+            start = 0
+        for lab, pos in current_pairs[start:]:
             # HSL sequence.Add types both args as strings; a bare numeric
             # position trips "type mismatch in formal parameter 2". pull()'s
             # _parse_pos turns digit-only positions back into ints, so always
@@ -187,8 +214,28 @@ class Sequence:
         parts.append(f"{n}.SetCount({self.end});")
         parts.append(f"{n}.SetCurrentPosition({self.current});")
         self._con.execute("".join(parts))
+        self._pushed = current_pairs
 
     def pull(self) -> "Sequence":
+        """Refresh the cursor (current, end) only.
+
+        Labware/position are set by ``push()`` and HSL never mutates them, so
+        round-tripping the arrays per SMT call wastes ~40 bytes/entry and
+        exposes an HSL ``sequence`` storage-doubling quirk (each ``push()``
+        appends without truncating ``GetTotal()``). Cursor-only keeps the
+        result bounded regardless. Use ``pull_full()`` if you really need the
+        contents (e.g. inspecting a sequence Venus populated for you).
+        """
+        result = self._con.execute(
+            f'AddJsonVariable(___JSON___, {self.name}.GetCurrentPosition(), "current");'
+            f'AddJsonVariable(___JSON___, {self.name}.GetCount(), "end");'
+        )
+        self.current = int(result.get("current", self.current))
+        self.end = int(result.get("end", self.end))
+        return self
+
+    def pull_full(self) -> "Sequence":
+        """Pull cursor + labware/position. Use at init or when Venus mutated content."""
         result = self._con.execute(
             f'AddJsonSequence(___JSON___, {self.name}, "value");'
         )
@@ -197,6 +244,9 @@ class Sequence:
         self.position = [_parse_pos(p) for p in data.get("position", [])]
         self.current = int(data.get("current", 1))
         self.end = int(data.get("end", len(self.labware)))
+        # HSL already holds these entries; record them (normalised) so the next
+        # push() syncs the cursor instead of re-Adding and doubling them.
+        self._pushed = list(zip(self.labware, self.position))
         return self
 
     def pull_with_xyz(self) -> dict[str, list[Any]]:
@@ -208,6 +258,7 @@ class Sequence:
         self.position = [_parse_pos(p) for p in data.get("position", [])]
         self.current = int(data.get("current", 1))
         self.end = int(data.get("end", len(self.labware)))
+        self._pushed = list(zip(self.labware, self.position))
         return data
 
     def as_records(self) -> list[dict[str, Any]]:
