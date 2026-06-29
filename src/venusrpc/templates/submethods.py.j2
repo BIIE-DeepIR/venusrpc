@@ -6,13 +6,15 @@ Wrapper for submethod library: ``{{ submethod.name }}``.
 from venusrpc import Connection, Variable, Array, Sequence, Device
 from venusrpc._hsl import call as _hsl_call, literal as _hsl_literal
 
+from ._smt_paths import smt_include
+
 
 class {{ submethod.name[0]|upper }}{{ submethod.name[1:]|lower }}:
     """{{ submethod.name }} submethod library."""
 
     def __init__(self, con: Connection) -> None:
         self._con = con
-        self._con.execute(definitions=r'#include "{{ submethod.file }}"')
+        self._con.execute(definitions=smt_include({{ submethod.file | tojson }}))
 {% for f in submethod.functions %}
     def {{ f.name }}(self
         {%- for p in f.parameters -%}

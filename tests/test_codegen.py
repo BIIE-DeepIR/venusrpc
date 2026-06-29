@@ -34,7 +34,7 @@ def test_deck_layout_template_renders(env: Environment):
 def test_submethod_template_renders(env: Environment):
     sm = _Submethod(
         name="pipetting",
-        file="C:\\\\path\\\\Pipetting.hs_",
+        file="Pipetting.hs_",
         functions=[
             _Function(
                 name="aspirate",
@@ -70,6 +70,10 @@ def test_submethod_template_renders(env: Environment):
     assert "volume=50" in out
     assert '_hsl_call("PIPETTING", "aspirate", parts)' in out
     assert "self._con.execute" in out
+    # Include path is resolved at runtime via the helper, not baked absolute.
+    assert "from ._smt_paths import smt_include" in out
+    assert 'smt_include("Pipetting.hs_")' in out
+    assert "#include" not in out
 
 
 def test_liquid_classes_template_renders(env: Environment):

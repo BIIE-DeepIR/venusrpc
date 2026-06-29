@@ -1,0 +1,20 @@
+"""Resolve SMT (.hs_) include paths for generated submethod wrappers.
+
+The auto-generated ``__smt__*.py`` modules used to embed absolute paths
+to the ``.hs_`` files. After porting into ``automation-suite`` we resolve
+them relative to ``hamilton/resources/smt/`` so the package is portable.
+"""
+
+from pathlib import Path
+
+_SMT_DIR = Path(__file__).resolve().parent.parent / "resources" / "smt"
+
+
+def smt_include(filename: str) -> str:
+    """Return an HSL ``#include "..."`` directive for the given SMT file.
+
+    Windows paths must use escaped backslashes inside an HSL string literal,
+    so single backslashes are doubled before formatting.
+    """
+    path = str(_SMT_DIR / filename).replace("\\", "\\\\")
+    return f'#include "{path}"'

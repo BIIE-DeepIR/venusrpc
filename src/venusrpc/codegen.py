@@ -269,6 +269,16 @@ class Codegen:
         in_dir = in_dir.resolve()
         out_dir = cls._resolve_output_dir(output_dir)
 
+        # The generated wrappers resolve their .hs_ include via smt_include from
+        # this sibling helper; emit it if absent so a fresh output package isn't
+        # left importing a module the tool never created.
+        smt_paths_py = out_dir / "_smt_paths.py"
+        if not smt_paths_py.exists():
+            smt_paths_py.write_text(
+                cls._jinja_env().get_template("smt_paths.py.j2").render(),
+                encoding="utf-8",
+            )
+
         generated: list[Path] = []
         for hsi_path in in_dir.rglob("*.hsi"):
             if hsi_path.stem.startswith("~"):
@@ -749,7 +759,7 @@ class Codegen:
 
         submethod = _Submethod(
             name=_sanitize_identifier(hsi_path.stem.replace(" ", "_")),
-            file=str(hsi_path.with_suffix(".hs_")).replace("\\", "\\\\"),
+            file=hsi_path.with_suffix(".hs_").name,
         )
 
         for match in pattern_function.finditer(content):
