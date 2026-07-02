@@ -266,11 +266,7 @@ class Connection:
             payload = f"{cmd_id}\n\n{_SEPARATOR}\n"
             self._server._cmd_queue.put(payload)
             try:
-                data = self._server._result_queue.get(timeout=result_timeout)
-            except Empty as exc:
-                raise VenusTransportError(
-                    f"runtime did not return a result within {result_timeout}s"
-                ) from exc
+                data = self._await_result(result_timeout)
             finally:
                 if not self._keep_command_files:
                     self._remove_command_file(cmd_path)
@@ -282,6 +278,30 @@ class Connection:
                 data=list(data.get("error_data", []) or []),
             )
         return data
+
+    def _await_result(self, result_timeout: float) -> dict[str, Any]:
+        """Wait for the HSL side to POST a result.
+
+        Polls in short intervals so we can fail fast if the runtime process dies
+        mid-command — when a run is aborted on the Hamilton side or run control
+        is closed, HxRun.exe exits. Detect that within ~0.5s instead of blocking
+        out the full ``result_timeout`` (which is minutes-long for slow steps).
+        """
+        deadline = time.monotonic() + result_timeout
+        while True:
+            try:
+                return self._server._result_queue.get(timeout=0.5)
+            except Empty:
+                if self._process is not None and self._process.poll() is not None:
+                    raise VenusTransportError(
+                        f"Venus runtime exited (code {self._process.returncode}) "
+                        "while awaiting a result — the run was aborted or run "
+                        "control was closed."
+                    ) from None
+                if time.monotonic() >= deadline:
+                    raise VenusTransportError(
+                        f"runtime did not return a result within {result_timeout}s"
+                    ) from None
 
     def _write_command_file(self, definitions: str, hsl_code: str) -> Path:
         """Write the command HSL file that the runtime will include."""

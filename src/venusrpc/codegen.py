@@ -823,12 +823,14 @@ class Codegen:
                     skip = True
                     break
                 if direction != "in" and default is not None:
+                    # A default on an output/in-out param is meaningless (the
+                    # value isn't passed in). Ignore it rather than dropping the
+                    # whole submethod, which would leave the wrapper unusable.
                     warnings.warn(
-                        f"{hsi_path.name} ({fname}): defaults only allowed for "
-                        f"input params; skipping"
+                        f"{hsi_path.name} ({fname}): ignoring default on non-input "
+                        f"param {pname!r} (defaults apply to input params only)"
                     )
-                    skip = True
-                    break
+                    default = None
 
                 params.append(
                     _Parameter(
