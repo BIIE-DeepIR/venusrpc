@@ -19,7 +19,7 @@ def env() -> Environment:
 
 def test_deck_layout_template_renders(env: Environment):
     out = env.get_template("deck_layout.py.j2").render(
-        layout_file="C:\\\\path\\\\to\\\\deck.lay",
+        layout_filename="deck.lay",
         layout_name="my_deck",
         sequences=["WashStation", "Plate1"],
         labware=["TipRack_1000ul", "Plate96"],
@@ -29,6 +29,9 @@ def test_deck_layout_template_renders(env: Environment):
     assert "TipRack_1000ul" in out
     assert "class Sequences" in out
     assert "class Labware" in out
+    # Path is resolved at runtime via the helper, not baked absolute.
+    assert "from ._layout_paths import layout_path" in out
+    assert 'layout_path("deck.lay")' in out
 
 
 def test_submethod_template_renders(env: Environment):

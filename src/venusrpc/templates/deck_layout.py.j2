@@ -6,8 +6,9 @@ from venusrpc import LabwareInstance
 
 from . import {{ labware_module }} as _labware
 {% endif %}
+from ._layout_paths import layout_path
 
-LAYOUT_FILE = r"{{ layout_file }}"
+LAYOUT_FILE = layout_path({{ layout_filename | tojson }})
 
 
 class {{ layout_name[0]|upper }}{{ layout_name[1:] }}:

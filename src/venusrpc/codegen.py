@@ -198,6 +198,17 @@ class Codegen:
         """
         layout = Path(layout).resolve()
         out_dir = cls._resolve_output_dir(output_dir)
+
+        # The generated wrapper resolves its .lay path via layout_path from
+        # this sibling helper; emit it if absent so a fresh output package
+        # isn't left importing a module the tool never created.
+        layout_paths_py = out_dir / "_layout_paths.py"
+        if not layout_paths_py.exists():
+            layout_paths_py.write_text(
+                cls._jinja_env().get_template("layout_paths.py.j2").render(),
+                encoding="utf-8",
+            )
+
         layout_stem = layout.stem
         sanitized = _sanitize_identifier(layout_stem.lower())
         generated_stem = f"__layout__{sanitized}"
@@ -239,7 +250,7 @@ class Codegen:
         env = cls._jinja_env()
         template = env.get_template("deck_layout.py.j2")
         body = template.render(
-            layout_file=str(layout).replace("\\", "\\\\"),
+            layout_filename=layout.name,
             layout_name=sanitized,
             sequences=sorted(set(sequences)),
             labware=sorted(set(labware)),

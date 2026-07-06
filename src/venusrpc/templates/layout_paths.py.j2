@@ -1,0 +1,15 @@
+"""Resolve deck-layout (.lay) paths for generated layout wrappers.
+
+The auto-generated ``__layout__*.py`` modules used to embed absolute paths
+to the ``.lay`` files. We resolve them relative to ``resources/lay/``
+instead so the package is portable across checkouts and machines.
+"""
+
+from pathlib import Path
+
+_LAY_DIR = Path(__file__).resolve().parent.parent / "resources" / "lay"
+
+
+def layout_path(filename: str) -> str:
+    """Return the absolute path to the given .lay file, resolved at runtime."""
+    return str(_LAY_DIR / filename)
