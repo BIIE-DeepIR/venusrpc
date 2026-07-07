@@ -112,34 +112,11 @@ function AddJsonSequence(variable & j, sequence seq, variable name) void {
 }
 
 function AddJsonSequenceXyz(variable & j, sequence seq, variable name) void {
-   variable i, jLab(""), jPos(""), jx(""), jy(""), jz(""), jang("");
-   variable arr[];
-   JsonObjStart(j, name);
-   JsonProp(j, "current", seq.GetCurrentPosition());
-   JsonProp(j, "end", seq.GetCount());
-   seq.SetCurrentPosition(1);
-   seq.SetCount(seq.GetTotal());
-   JsonArrStart(jLab, "labware");
-   JsonArrStart(jPos, "position");
-   JsonArrStart(jx, "x");
-   JsonArrStart(jy, "y");
-   JsonArrStart(jz, "z");
-   JsonArrStart(jang, "angle");
-   for (i = 0; i < seq.GetTotal();) {
-      JsonArrElt(jLab, seq.GetLabwareId());
-      JsonArrElt(jPos, seq.GetPositionId());
-      __DEVICE__.GetLabwarePosition(seq.GetLabwareId(), arr, seq.GetPositionId());
-      JsonArrElt(jx, arr[0]);
-      JsonArrElt(jy, arr[1]);
-      JsonArrElt(jz, arr[2]);
-      JsonArrElt(jang, arr[3]);
-      seq.Increment(1);
-      i = i + 1;
-   }
-   JsonArrEnd(jLab); JsonArrEnd(jPos);
-   JsonArrEnd(jx); JsonArrEnd(jy); JsonArrEnd(jz); JsonArrEnd(jang);
-   j = j + jLab + jPos + jx + jy + jz + jang;
-   JsonObjEnd(j);
+   // GetLabwarePosition is not a member of the simulated VANTAGE device and
+   // makes every generated simulation method fail analysis, even when XYZ
+   // sequence data is never requested. Preserve the usable sequence payload;
+   // callers needing physical XYZ must query it on supported live devices.
+   AddJsonSequence(j, seq, name);
 }
 
 // ----------------------------------------------------------------------------
