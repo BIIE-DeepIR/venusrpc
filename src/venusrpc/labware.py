@@ -12,10 +12,17 @@ labware *while a method is running*:
 * :meth:`Labware.get_labware_position` — read a labware's current X/Y/Z/angle.
 * :meth:`Labware.get_template_labware_names` — enumerate carrier templates and
   the labware currently on them.
+* :meth:`Labware.set_relative_position` — nudge an already-placed labware's
+  taught pose in place by a relative (dx, dy, dz, dangle). Unlike the methods
+  above, this wraps ``HSLLabwrAccess::RelativePositionValuesSetForLabwareID``
+  (a Hamilton library, not a built-in device method) — the connection needs
+  ``#include "HSLLabwrAccess\\HSLLabwrAccess.hsl"`` added once via
+  ``Connection.execute(definitions=...)`` before this can be called.
 
 These are *built-in* device methods (the host script already calls
 ``__DEVICE__.GetLabwarePosition(...)`` directly), so no extra ``#include`` is
-needed — only ``VirtualLabware_V2``'s higher-level helpers would require one.
+needed — only ``VirtualLabware_V2``'s higher-level helpers (and
+``set_relative_position``, see above) would require one.
 
 Marshalling reuses :class:`~venusrpc.types.Array` (for the ``position[4]`` /
 ``offset[3]`` arrays) and :class:`~venusrpc.types.Variable` (to capture the
@@ -156,6 +163,37 @@ class Labware:
         expr = f"{device.name}.RemoveLabware({_hsl.literal(labware_id)})"
         return self._call_status(
             expr, method="RemoveLabware", labware_id=labware_id, check=check
+        )
+
+    def set_relative_position(
+        self,
+        device: Device,
+        labware_id: str,
+        dx: float,
+        dy: float,
+        dz: float,
+        dangle: float = 0.0,
+        *,
+        check: bool = True,
+    ) -> int:
+        """Nudge placed ``labware_id``'s taught pose in place by (dx, dy, dz, dangle) mm/deg.
+
+        Wraps ``HSLLabwrAccess::RelativePositionValuesSetForLabwareID``, which
+        reads the labware's current pose and adds the delta -- calling this
+        once with ``(dx, dy, dz, dangle)`` and later with the negation exactly
+        restores the original pose. Requires
+        ``#include "HSLLabwrAccess\\HSLLabwrAccess.hsl"`` to already be on
+        this ``Connection`` (add once via ``con.execute(definitions=...)``).
+        """
+        expr = (
+            f"HSLLabwrAccess::RelativePositionValuesSetForLabwareID("
+            f"{device.name}, {_hsl.literal(labware_id)}, "
+            f"{_hsl.literal(float(dx))}, {_hsl.literal(float(dy))}, "
+            f"{_hsl.literal(float(dz))}, {_hsl.literal(float(dangle))})"
+        )
+        return self._call_status(
+            expr, method="RelativePositionValuesSetForLabwareID",
+            labware_id=labware_id, check=check,
         )
 
     # -- queries ------------------------------------------------------------

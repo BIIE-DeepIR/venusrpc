@@ -1,5 +1,9 @@
 """Unit tests for labware-definition parsing helpers (no Venus required)."""
 
+from typing import Any
+
+import pytest
+
 from venusrpc.codegen import (
     Codegen,
     _flat_float,
@@ -7,6 +11,7 @@ from venusrpc.codegen import (
     _parse_flat_hxcfg,
     _safe_volume,
 )
+from venusrpc.labware import Labware, LabwarePlacementError
 
 _SAMPLE_RCK = """HxCfgFile,2;
 
@@ -72,3 +77,33 @@ def test_safe_volume_rejects_unsafe_or_missing():
     assert _safe_volume("h*2", None) is None
     assert _safe_volume(None, 1.0) is None
     assert _safe_volume("abs(h)", 1.0) is None  # names other than h are rejected
+
+
+class _FakeDevice:
+    name = "ML_STAR"
+
+
+class _FakeConnection:
+    def __init__(self, status: int = 1) -> None:
+        self.calls: list[str] = []
+        self._status = status
+
+    def execute(self, hsl_code: str = "", definitions: str = "") -> dict[str, Any]:
+        self.calls.append(hsl_code)
+        return {"value": self._status}
+
+
+def test_set_relative_position_builds_expected_hsl_call():
+    con = _FakeConnection()
+    Labware(con).set_relative_position(_FakeDevice(), "MPH_azenta", 2.0, 0.0, -0.5)
+    expected = (
+        'HSLLabwrAccess::RelativePositionValuesSetForLabwareID'
+        '(ML_STAR, "MPH_azenta", 2.0, 0.0, -0.5, 0.0)'
+    )
+    assert any(expected in call for call in con.calls), con.calls
+
+
+def test_set_relative_position_raises_on_bad_status():
+    con = _FakeConnection(status=0)
+    with pytest.raises(LabwarePlacementError):
+        Labware(con).set_relative_position(_FakeDevice(), "MPH_azenta", 2.0, 0.0, -0.5)
