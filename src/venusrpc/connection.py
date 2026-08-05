@@ -25,6 +25,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from queue import Empty, Queue
@@ -118,6 +119,7 @@ class Connection:
     DEFAULT_RUN_ENVIRONMENT = r"C:\Program Files (x86)\HAMILTON\Bin\HxRun.exe"
     _DEVICE_PLACEHOLDER = 'device __DEVICE__("", "", hslTrue);'
     _COMMAND_PREFIX_PLACEHOLDER = '"__VENUSRPC_COMMAND_PREFIX__"'
+    _PORT_FILE_PLACEHOLDER = '"__VENUSRPC_PORT_FILE__"'
 
     def __init__(
         self,
@@ -139,7 +141,6 @@ class Connection:
     ) -> None:
         self._hsl_dir = Path(__file__).resolve().parent / "hsl"
         self._hsl_template = self._hsl_dir / "venusrpc_host.hsl"
-        self._port_file = self._hsl_dir / "venusrpc.port"
         self._cmd_dir = (
             Path(command_dir).resolve()
             if command_dir
@@ -180,8 +181,12 @@ class Connection:
 
         lay = Path(layout_file).resolve() if layout_file else None
         self.layout_file = lay
-        self._host_script = self._stamp_host_script(lay, instrument_name)
-        self._port_file = self._host_script.parent / "venusrpc.port"
+        # Per-connection token: the port file used to be a single fixed
+        # `venusrpc.port` shared by every Connection in the command dir, so two
+        # concurrent runtimes on one PC could read each other's port.
+        token = uuid.uuid4().hex
+        self._port_file = self._cmd_dir / f"venusrpc_{token}.port"
+        self._host_script = self._stamp_host_script(lay, instrument_name, token)
 
         self._server = _VenusServer((host, port), _VenusHandler)
         bound_port: int = self._server.server_address[1]
@@ -200,15 +205,18 @@ class Connection:
         atexit.register(self.close)
 
     def _stamp_host_script(
-        self, layout_file: Path | None, instrument_name: str
+        self, layout_file: Path | None, instrument_name: str, token: str
     ) -> Path:
-        import uuid as _uuid
-
         template = self._hsl_template.read_text(encoding="utf-8")
         command_prefix = str(self._cmd_dir / "__venusrpc_cmd_")
         content = template.replace(
             self._COMMAND_PREFIX_PLACEHOLDER,
             _hsl.literal(command_prefix),
+            1,
+        )
+        content = content.replace(
+            self._PORT_FILE_PLACEHOLDER,
+            _hsl.literal(str(self._port_file)),
             1,
         )
         if layout_file:
@@ -217,7 +225,7 @@ class Connection:
                 f"{_hsl.literal(instrument_name)}, hslTrue);"
             )
             content = content.replace(self._DEVICE_PLACEHOLDER, device_line, 1)
-        out = self._cmd_dir / f"venusrpc_host_{_uuid.uuid4().hex}.hsl"
+        out = self._cmd_dir / f"venusrpc_host_{token}.hsl"
         out.write_text(content, encoding="utf-8")
         return out
 
@@ -429,7 +437,8 @@ class Connection:
                 raise VenusTransportError(
                     f"Venus runtime exited during startup (exit code {exit_code}) "
                     "before connecting. This usually means 'Analyze method' failed "
-                    "— most often the instrument is powered off or unreachable on "
+                    "— a required HSL library is not installed on this PC (see the "
+                    "trace below), the instrument is powered off or unreachable on "
                     "the network, or the layout/method failed to compile."
                     + (f" Venus trace: {detail}" if detail else "")
                 )
@@ -446,11 +455,18 @@ class Connection:
                 )
 
     def _startup_diagnostics(self) -> str:
-        """Best-effort one-line summary from the host trace for error messages.
+        """Best-effort summary of the most diagnostic trace lines.
 
-        Returns the last few ``Analyze method`` / error lines from this host's
-        trace file, or ``""`` if it can't be read (e.g. not written yet, or
-        still locked by the runtime)."""
+        Returns "" if the trace can't be read (not written yet, or still locked
+        by the runtime).
+
+        Order matters more than recency here. One missing ``#include`` produces
+        a single ``cannot open include file`` error followed by dozens of
+        ``undeclared identifier`` errors — one per symbol that file would have
+        defined. Reporting the tail of the trace therefore shows only the
+        cascade and buries the cause, so surface include failures first and
+        otherwise the earliest errors.
+        """
         try:
             stem = self._host_script.stem
             traces = sorted(
@@ -462,12 +478,13 @@ class Connection:
             text = traces[-1].read_text(encoding="utf-8", errors="replace")
         except OSError:
             return ""
-        salient = [
-            line.strip()
-            for line in text.splitlines()
-            if "Analyze method" in line or "error" in line.lower()
+        errors = [
+            line.strip() for line in text.splitlines() if "error" in line.lower()
         ]
-        return " | ".join(salient[-3:])
+        if not errors:
+            return ""
+        includes = [line for line in errors if "cannot open include file" in line]
+        return " | ".join((includes or errors)[:3])
 
     def _cleanup_on_failure(self) -> None:
         self._server.shutdown()

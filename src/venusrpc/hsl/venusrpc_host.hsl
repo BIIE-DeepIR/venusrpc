@@ -15,11 +15,9 @@
 // ============================================================================
 
 #include "HSLHttp\HSLHttp.hsl"
-#include "HSLExtensions\File.hsl"
 #include "HSLStrLib.hsl"
 
 namespace venusrpc {
-   variable strScriptDir;
    variable strPortFile;
    variable strBaseUrl;
    object objHttp;
@@ -162,8 +160,11 @@ method main()
    variable intStatus;
    file hdlFile;
 
-   venusrpc::strScriptDir = HSLExtensions::File::GetDirectoryName(GetFileName());
-   venusrpc::strPortFile = venusrpc::strScriptDir + "\\venusrpc.port";
+   // Stamped by Connection._stamp_host_script. Python owns this path (it writes
+   // the file), so it passes it in rather than making HSL re-derive it from
+   // GetFileName() — that needed HSLExtensions::File::GetDirectoryName, an
+   // add-on library that is not installed on every Venus PC.
+   venusrpc::strPortFile = "__VENUSRPC_PORT_FILE__";
 
    // Read port from file.
    hdlFile.AddField(1, strContent, hslString);
