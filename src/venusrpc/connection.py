@@ -249,6 +249,7 @@ class Connection:
         definitions: str = "",
         *,
         timeout: float | None = None,
+        step_data: str = "",
     ) -> dict[str, Any]:
         """Send HSL code to the runtime and return the parsed JSON response.
 
@@ -258,6 +259,10 @@ class Connection:
             timeout: Seconds to wait for this command's result. Defaults to the
                 Connection's ``result_timeout``; raise it for an unusually long
                 blocking step.
+            step_data: A .stp document, written beside the command file. Only
+                needed to call a device step, which looks its parameters up by
+                guid in the step data of the file it is called from -- see
+                :mod:`venusrpc.step_data`.
 
         Returns:
             Parsed JSON object returned by the runtime. Empty dict if nothing
@@ -269,7 +274,9 @@ class Connection:
             self._command_counter += 1
             cmd_id = self._command_counter
 
-            cmd_path = self._write_command_file(definitions, hsl_code)
+            cmd_path = self._write_command_file(
+                definitions, hsl_code, step_data
+            )
 
             payload = f"{cmd_id}\n\n{_SEPARATOR}\n"
             self._server._cmd_queue.put(payload)
@@ -311,10 +318,17 @@ class Connection:
                         f"runtime did not return a result within {result_timeout}s"
                     ) from None
 
-    def _write_command_file(self, definitions: str, hsl_code: str) -> Path:
+    def _write_command_file(
+        self, definitions: str, hsl_code: str, step_data: str = ""
+    ) -> Path:
         """Write the command HSL file that the runtime will include."""
         content = f"{definitions}\nfunction __EvalExpr__()\n{{\n{hsl_code}\n}}\n"
         cmd_path = self._cmd_dir / f"__venusrpc_cmd_{self._command_counter}.hsl"
+        if step_data:
+            # Before the .hsl, never after: the runtime compiles the command
+            # file as soon as it appears, and resolves the steps in it against
+            # the sibling .stp right then.
+            cmd_path.with_suffix(".stp").write_text(step_data, encoding="ascii")
         tmp_path = cmd_path.with_suffix(".hsltmp")
         tmp_path.write_text(content, encoding="utf-8")
         os.replace(tmp_path, cmd_path)
@@ -322,12 +336,13 @@ class Connection:
         return cmd_path
 
     def _remove_command_file(self, path: Path) -> None:
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
-        except OSError:
-            pass
+        for target in (path, path.with_suffix(".stp")):
+            try:
+                target.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
         self._command_files.discard(path)
 
     def close(self) -> None:

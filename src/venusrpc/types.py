@@ -16,7 +16,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable
 
-from . import _hsl
+from . import _hsl, step_data
 from venusrpc.connection import Connection
 
 _name_counter = itertools.count(1)
@@ -287,6 +287,20 @@ class Sequence:
         return len(self.labware)
 
 
+# Instrument identity and the front cover both come out of Hamilton's own
+# libraries, resolved against Venus's default Library\ path: the serial from an
+# HSL function, the cover from a device step.
+_SERIAL_INCLUDE = '#include "HSLGetSerialNumber.hsl"'
+_MAINT_LIB_STP = "HslStarLineMaintMetLib.stp"
+
+# One step does both directions -- its LockFrontCoverState is 0 in the first
+# block and 1 in the second. Calling it by guid is what MtcLib::LockCover does
+# internally, minus the MessageBox loops wrapped around it there.
+_COVER_STEP = "_2931977C_E32F_4471_8B68_F31ED1A866F5"
+_COVER_UNLOCK = "13358f08_1f67_4dcd_ac2dd6c120e15c21"
+_COVER_LOCK = "ca965d5b_e567_47e5_a8d23f2768eee8ec"
+
+
 class Device:
     """A Venus device bound to a deck layout."""
 
@@ -335,6 +349,57 @@ class Device:
         object.__setattr__(obj, "name", name)
         object.__setattr__(obj, "layout_file", Path(layout_file))
         return obj
+
+    # ── Instrument identity ─────────────────────────────────────────────────
+
+    def serial_number(self) -> str:
+        """The instrument's serial, e.g. ``"SN2043"``.
+
+        Needs an initialized instrument -- the firmware call behind it (C0RI)
+        answers nothing before that. Venus simulation answers a simulator
+        serial instead of the real one: SN1234 on the Vantage / STAR-V line,
+        SN0000 on the STAR line.
+        """
+        res = self._con.execute(
+            f'AddJsonVariable(___JSON___, GetSerialNumber({self.name}), "sn");',
+            definitions=_SERIAL_INCLUDE,
+        )
+        return str(res.get("sn", ""))
+
+    # ── Front cover ─────────────────────────────────────────────────────────
+
+    def open_front_cover(self) -> None:
+        """Lower the motorised front cover so an operator can reach the deck.
+
+        Vantage-specific geometry: the cover is hinged along the bottom, so it
+        flips DOWN to open and rises to close. It is held shut by its motor,
+        not a latch (C0AMQW answers ``cg0 0 0 0 0 0`` -- no lock fitted), which
+        is why releasing the lock is what drops it.
+        """
+        self._front_cover(_COVER_UNLOCK)
+
+    def close_front_cover(self) -> None:
+        """Raise the front cover shut again.
+
+        Venus raises it anyway when the method ends, so a run that opened the
+        cover does not have to put it back -- this is for closing it *during* a
+        run, between two operator steps.
+        """
+        self._front_cover(_COVER_LOCK)
+
+    def _front_cover(self, guid: str) -> None:
+        """Call the cover step directly, bypassing ``MtcLib::LockCover``.
+
+        The library function is unusable in both directions: its lock branch
+        loops ``while (!IsCoverClosed) MessageBox(...)`` and this instrument's
+        cover status is hardwired to "open", so it prompts forever; and its
+        unlock branch prompts too unless the message and title are both empty.
+        The step underneath has no such wrapper.
+        """
+        self._con.execute(
+            f'{self.name}.{_COVER_STEP}("{guid}");',
+            step_data=step_data.read(guid, _MAINT_LIB_STP),
+        )
 
 
 def _interp_width(
