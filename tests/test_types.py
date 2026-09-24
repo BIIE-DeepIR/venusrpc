@@ -183,7 +183,9 @@ def test_sequence_pull_with_xyz():
             "z": [1.0, 1.5],
         }
     }
-    con = MockConnection(return_queue=[payload])
+    # Sequence.__init__ makes 1 execute() call for deck_sequence=True: pull_full().
+    # Supply {} for that so the payload reaches pull_with_xyz().
+    con = MockConnection(return_queue=[{}, payload])
     s = Sequence(con, name="seq", deck_sequence=True)
     data = s.pull_with_xyz()
     assert s.labware == ["a", "b"]
