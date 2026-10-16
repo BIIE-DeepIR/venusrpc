@@ -1,8 +1,8 @@
 """Resolve SMT (.hs_) include paths for generated submethod wrappers.
 
 The auto-generated ``__smt__*.py`` modules used to embed absolute paths
-to the ``.hs_`` files. After porting into ``automation-suite`` we resolve
-them relative to ``hamilton/resources/smt/`` so the package is portable.
+to the ``.hs_`` files. They are now resolved relative to ``resources/smt/``
+next to the generated package, so it stays portable.
 """
 
 from pathlib import Path

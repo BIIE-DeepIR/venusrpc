@@ -19,16 +19,13 @@ file-polling IPC for a loopback HTTP socket so per-call latency drops from
 
 ## Status
 
-Alpha. Transport layer is complete but the HSL host script contains TODOs that
-must be reconciled against your local `HSLTcpIpLib.chm` before the runtime
-side can be loaded by Venus. See
-`src/venusrpc/hsl/venusrpc_host.hsl` for the markers.
+Alpha. APIs may change between minor versions. Requires Windows with
+Hamilton Venus installed to drive an instrument; layout and submethod codegen run anywhere.
 
 ## Install
 
 ```bash
-uv pip install venusrpc          # core (includes pyodbc)
-uv pip install 'venusrpc[dev]'   # tests + linting
+pip install venusrpc
 ```
 
 ## Quickstart
@@ -214,4 +211,4 @@ uv run pytest
 
 ## License
 
-LGPL-3.0-or-later.
+LGPL-3.0-or-later. See [LICENSE](LICENSE) and [COPYING](COPYING).
