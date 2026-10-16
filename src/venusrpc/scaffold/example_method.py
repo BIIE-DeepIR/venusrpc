@@ -4,7 +4,7 @@ Run with:
     python example_method.py
 """
 
-from venusrpc import Connection, Device, Sequence, Variable
+from venusrpc import Connection, Device, Sequence, Variable  # noqa: F401
 
 
 def main() -> None:

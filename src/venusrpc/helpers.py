@@ -78,7 +78,7 @@ class Helpers:
             row = idx // shape.columns
             col = idx % shape.columns
         else:
-            raise ValueError(f"sorting_mode must be 'row' or 'column'")
+            raise ValueError("sorting_mode must be 'row' or 'column'")
         col_str = f"{col + 1:02d}" if zero_padding else str(col + 1)
         return f"{_row_letter(row)}{col_str}"
 

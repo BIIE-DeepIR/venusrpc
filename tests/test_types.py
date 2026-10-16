@@ -34,7 +34,7 @@ def test_variable_definition_and_push():
 
 def test_variable_string_literal_is_escaped():
     con = MockConnection()
-    v = Variable(con, 'hello "world"', name="s")
+    Variable(con, 'hello "world"', name="s")
     assert con.calls[0]["definitions"] == r'variable s("hello \"world\"");'
 
 
@@ -97,7 +97,7 @@ def test_sequence_pull_parses_response():
 def test_liquid_class_renders_as_string_literal():
     lc = LiquidClass("HighVolume_Water_DispenseJet_Empty")
     con = MockConnection()
-    v = Variable(con, lc.name, name="liq")
+    Variable(con, lc.name, name="liq")
     # Initialise as a string literal
     assert "HighVolume_Water_DispenseJet_Empty" in con.calls[0]["definitions"]
 
@@ -139,7 +139,7 @@ def test_device_creates_definition_and_sets_main():
 
 def test_device_no_main():
     con = MockConnection()
-    d = Device(con, r"C:\path\to\deck.lay", main=False)
+    Device(con, r"C:\path\to\deck.lay", main=False)
     assert len(con.calls) == 1
     assert "device" in con.calls[0]["definitions"]
 

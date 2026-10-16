@@ -180,7 +180,6 @@ def _cmd_init(args: argparse.Namespace) -> int:
 
 def _cmd_simulation(args: argparse.Namespace) -> int:
     from venusrpc.simulation import (
-        DEFAULT_CONFIG_DIR,
         get_simulation,
         set_simulation,
     )

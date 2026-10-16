@@ -133,7 +133,7 @@ in the project root) and use the `venusrpc` CLI.
 ```toml
 # pyproject.toml
 [tool.venusrpc]
-layouts = ["lay/NGSSTARV_Deck.lay"]   # str or list; paths relative to this file
+layouts = ["lay/my_deck.lay"]   # str or list; paths relative to this file
 submethods_dir = "smt"                 # default: ./smt
 output_dir = "venus_resources"         # default: ./venus_resources
 
