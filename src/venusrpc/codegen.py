@@ -11,7 +11,7 @@ their scripts.
 
 Derived from ``pyvenus.resources`` in PyVenus by SNIPR Biome
 (https://github.com/sniprbiome/PyVenus, LGPL-3.0), modified for venusrpc
-from 2026-04 onward. The .hsi parameter parsing, HxCfg block parser, SMT
+from 2026-05 onward. The .hsi parameter parsing, HxCfg block parser, SMT
 comment lookup and liquid class DB filtering follow the PyVenus originals.
 """
 
