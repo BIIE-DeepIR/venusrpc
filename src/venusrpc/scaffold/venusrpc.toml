@@ -1,0 +1,7 @@
+[tool.venusrpc]
+layouts = ["lay/deck.lay"]
+submethods_dir = "smt"
+output_dir = "venus_resources"
+
+[tool.venusrpc.liquid_classes]
+enabled = false  # true to also generate liquid class names (Windows, needs pyodbc)

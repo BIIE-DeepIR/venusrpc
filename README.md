@@ -30,20 +30,37 @@ pip install venusrpc
 
 ## Quickstart
 
-```python
-from venusrpc import Connection, Device, Variable, Sequence
-
-with Connection() as con:
-    star = Device(con, r"C:\Path\to\layout.lay")
-
-    volume = Variable(con, 100, name="volume_ul")
-    tips = Sequence(con, name="tips", deck_sequence=True)
-
-    # ...call a generated submethod wrapper here...
-    print(con.execute('AddJsonVariable(___JSON___, volume_ul, "v");'))
+```bash
+venusrpc init my_method && cd my_method
+# copy your deck to lay/deck.lay (+ .res) and submethod libraries to smt/
+venusrpc generate
 ```
 
-`Connection.execute()` returns a parsed `dict`, not a JSON string.
+`venusrpc generate` turns the deck layout and submethod libraries into typed
+Python wrappers under `venus_resources/`. A method then reads like this:
+
+```python
+from venusrpc import Connection, Device, Sequence
+from venus_resources.__layout__deck import Deck
+from venus_resources.__smt__channels1ml_8 import Channels1ml_8
+from venus_resources.__smt__ml_star import Ml_star
+
+with Connection(layout_file=Deck.file, simulation=True) as con:
+    star = Device.from_existing(con)
+    channels = Channels1ml_8(con)
+    tips = Sequence(con, Deck.Sequences.Tips_50ul, deck_sequence=True)
+    source = Sequence(con, Deck.Sequences.Source_tubes, deck_sequence=True)
+    target = Sequence(con, Deck.Sequences.Target_plate, deck_sequence=True)
+
+    Ml_star(con).initialize(star)
+    channels.tip_pickup(ML_STAR=star, positions=tips)
+    channels.aspirate(
+        ML_STAR=star, positions=source, volume=10,
+        liquid_class="Tip_50ulFilter_Water_DispenseSurface_Empty",
+    )
+    channels.dispense(ML_STAR=star, positions=target, volume=10)
+    channels.tip_eject(ML_STAR=star, positions=tips, default_waste=1)
+```
 
 ## How it works
 
