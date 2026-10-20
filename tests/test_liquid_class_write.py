@@ -16,6 +16,7 @@ Requirements:
 from __future__ import annotations
 
 import shutil
+import os
 from pathlib import Path
 
 import pytest
@@ -265,7 +266,7 @@ def test_liquid_class_usable_as_venusrpc_type():
 # ---------------------------------------------------------------------------
 
 _HXRUN = Path(r"C:\Program Files (x86)\HAMILTON\Bin\HxRun.exe")
-_HSL_REMOTE = Path(r"C:\Vantage\pyvenus\src\pyvenus\HSL\HSLremote.hsl")
+_HSL_REMOTE = Path(os.environ.get("PYVENUS_HSL_REMOTE", "HSLremote.hsl"))
 
 
 @pytest.fixture(scope="module")

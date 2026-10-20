@@ -1,18 +1,18 @@
 """Integration tests against a live Venus runtime.
 
-HSLTcpIpLib is not installed on this machine, so venusrpc_host.hsl's TCP
-transport cannot be used directly.  Instead, a thin file-based bridge drives
-Venus via the pyvenus HSLremote.hsl protocol (write .hsl to toSystem/,
+These drive Venus through a thin file-based bridge over PyVenus's
+HSLremote.hsl protocol (write .hsl to toSystem/,
 read JSON from fromSystem/).  All venusrpc type wrappers are exercised against
 real HSL execution; TCP framing is covered by test_framing.py.
 
-Run:
+Point PYVENUS_HSL_REMOTE at HSLremote.hsl from a PyVenus checkout, then run:
     uv run pytest tests/test_integration.py -v
 """
 
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -30,7 +30,7 @@ from venusrpc.types import Array, Sequence, Variable
 # ---------------------------------------------------------------------------
 
 _HXRUN = Path(r"C:\Program Files (x86)\HAMILTON\Bin\HxRun.exe")
-_HSL_REMOTE = Path(r"C:\Vantage\pyvenus\src\pyvenus\HSL\HSLremote.hsl")
+_HSL_REMOTE = Path(os.environ.get("PYVENUS_HSL_REMOTE", "HSLremote.hsl"))
 
 pytestmark = pytest.mark.skipif(
     not _HXRUN.exists() or not _HSL_REMOTE.exists(),
