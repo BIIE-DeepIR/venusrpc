@@ -20,7 +20,21 @@ file-polling IPC for a loopback HTTP socket so per-call latency drops from
 ## Status
 
 Alpha. APIs may change between minor versions. Requires Windows with
-Hamilton Venus installed to drive an instrument; layout and submethod codegen run anywhere.
+Hamilton Venus installed, for driving an instrument and for codegen (Venus's
+converter reads the binary `.lay`/`.smt` files).
+Tested with Venus 4.5 and Venus 6.
+
+HSL libraries venusrpc needs from Venus's `Library`
+folder (`C:\Program Files (x86)\HAMILTON\Library`):
+
+| Library | Include | Needed for |
+|--|--|--|
+| HSLHttp | `HSLHttp\HSLHttp.hsl` | always: the HTTP transport to Python |
+| HSLStrLib | `HSLStrLib.hsl` | always: string handling in the host script |
+| HSLLabwrAccess | `HSLLabwrAccess\HSLLabwrAccess.hsl` | only `Labware` pose nudges; include it yourself via `con.execute(definitions=...)` |
+
+If one is missing, `Connection` fails at startup with Venus's
+`cannot open include file` error naming it.
 
 ## Install
 
@@ -229,3 +243,9 @@ uv run pytest
 ## License
 
 LGPL-3.0-or-later. See [LICENSE](LICENSE) and [COPYING](COPYING).
+
+## AI disclosure
+
+Most of this code was written with [Claude Code](https://claude.com/claude-code),
+under human direction and review. Treat it as you would any alpha library: read what you run, and try
+new methods in simulation first.
