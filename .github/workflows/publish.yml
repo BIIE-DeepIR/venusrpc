@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
+      contents: read   # checkout of the private repo
       id-token: write  # PyPI trusted publishing
     steps:
       - uses: actions/checkout@v4
